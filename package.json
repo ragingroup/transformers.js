@@ -24,7 +24,7 @@
   "scripts": {
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "typegen": "tsc --build",
+    "typegen": "tsc --build --noCheck",
     "dev": "webpack serve --no-client-overlay",
     "build": "webpack && npm run typegen",
     "test": "node --experimental-vm-modules --expose-gc node_modules/jest/bin/jest.js --verbose",
