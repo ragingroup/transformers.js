@@ -13,69 +13,49 @@
  * @module pipelines
  */
 
+import { AutoTokenizer, PreTrainedTokenizer } from "./tokenizers.js";
 import {
-    AutoTokenizer,
-    PreTrainedTokenizer,
-} from './tokenizers.js';
-import {
-    AutoModel,
-    AutoModelForSequenceClassification,
-    AutoModelForAudioClassification,
-    AutoModelForTokenClassification,
-    AutoModelForQuestionAnswering,
-    AutoModelForMaskedLM,
-    AutoModelForSeq2SeqLM,
-    AutoModelForSpeechSeq2Seq,
-    AutoModelForTextToWaveform,
-    AutoModelForTextToSpectrogram,
-    AutoModelForCTC,
-    AutoModelForCausalLM,
-    AutoModelForVision2Seq,
-    AutoModelForImageClassification,
-    AutoModelForImageSegmentation,
-    AutoModelForSemanticSegmentation,
-    AutoModelForUniversalSegmentation,
-    AutoModelForObjectDetection,
-    AutoModelForZeroShotObjectDetection,
-    AutoModelForDocumentQuestionAnswering,
-    AutoModelForImageToImage,
-    AutoModelForDepthEstimation,
-    AutoModelForImageFeatureExtraction,
-    PreTrainedModel,
-} from './models.js';
-import {
-    AutoProcessor,
-} from './models/auto/processing_auto.js';
-import {
-    Processor,
-} from './base/processing_utils.js';
+  AutoModel,
+  AutoModelForSequenceClassification,
+  AutoModelForAudioClassification,
+  AutoModelForTokenClassification,
+  AutoModelForQuestionAnswering,
+  AutoModelForMaskedLM,
+  AutoModelForSeq2SeqLM,
+  AutoModelForSpeechSeq2Seq,
+  AutoModelForTextToWaveform,
+  AutoModelForTextToSpectrogram,
+  AutoModelForCTC,
+  AutoModelForCausalLM,
+  AutoModelForVision2Seq,
+  AutoModelForImageClassification,
+  AutoModelForImageSegmentation,
+  AutoModelForSemanticSegmentation,
+  AutoModelForUniversalSegmentation,
+  AutoModelForObjectDetection,
+  AutoModelForZeroShotObjectDetection,
+  AutoModelForDocumentQuestionAnswering,
+  AutoModelForImageToImage,
+  AutoModelForDepthEstimation,
+  AutoModelForImageFeatureExtraction,
+  PreTrainedModel,
+} from "./models.js";
+import { AutoProcessor } from "./models/auto/processing_auto.js";
+import { Processor } from "./base/processing_utils.js";
 
-import {
-    Callable,
-} from './utils/generic.js';
+import { Callable } from "./utils/generic.js";
 
+import { dispatchCallback, product } from "./utils/core.js";
+import { softmax, max, round } from "./utils/maths.js";
+import { read_audio, RawAudio } from "./utils/audio.js";
 import {
-    dispatchCallback,
-    product,
-} from './utils/core.js';
-import {
-    softmax,
-    max,
-    round,
-} from './utils/maths.js';
-import {
-    read_audio,
-    RawAudio
-} from './utils/audio.js';
-import {
-    Tensor,
-    mean_pooling,
-    interpolate_4d,
-    quantize_embeddings,
-    topk,
-} from './utils/tensor.js';
-import { RawImage } from './utils/image.js';
-
+  Tensor,
+  mean_pooling,
+  interpolate_4d,
+  quantize_embeddings,
+  topk,
+} from "./utils/tensor.js";
+import { RawImage } from "./utils/image.js";
 
 /**
  * @typedef {string | RawImage | URL | Blob | HTMLCanvasElement | OffscreenCanvas} ImageInput
@@ -89,12 +69,12 @@ import { RawImage } from './utils/image.js';
  * @private
  */
 async function prepareImages(images) {
-    if (!Array.isArray(images)) {
-        images = [images];
-    }
+  if (!Array.isArray(images)) {
+    images = [images];
+  }
 
-    // Possibly convert any non-images to images
-    return await Promise.all(images.map(x => RawImage.read(x)));
+  // Possibly convert any non-images to images
+  return await Promise.all(images.map((x) => RawImage.read(x)));
 }
 
 /**
@@ -110,18 +90,20 @@ async function prepareImages(images) {
  * @private
  */
 async function prepareAudios(audios, sampling_rate) {
-    if (!Array.isArray(audios)) {
-        audios = [audios];
-    }
+  if (!Array.isArray(audios)) {
+    audios = [audios];
+  }
 
-    return await Promise.all(audios.map(x => {
-        if (typeof x === 'string' || x instanceof URL) {
-            return read_audio(x, sampling_rate);
-        } else if (x instanceof Float64Array) {
-            return new Float32Array(x);
-        }
-        return x;
-    }));
+  return await Promise.all(
+    audios.map((x) => {
+      if (typeof x === "string" || x instanceof URL) {
+        return read_audio(x, sampling_rate);
+      } else if (x instanceof Float64Array) {
+        return new Float32Array(x);
+      }
+      return x;
+    }),
+  );
 }
 
 /**
@@ -140,14 +122,13 @@ async function prepareAudios(audios, sampling_rate) {
  * @private
  */
 function get_bounding_box(box, asInteger) {
-    if (asInteger) {
-        box = box.map(x => x | 0);
-    }
-    const [xmin, ymin, xmax, ymax] = box;
+  if (asInteger) {
+    box = box.map((x) => x | 0);
+  }
+  const [xmin, ymin, xmax, ymax] = box;
 
-    return { xmin, ymin, xmax, ymax };
+  return { xmin, ymin, xmax, ymax };
 }
-
 
 /**
  * @callback DisposeType Disposes the item.
@@ -162,26 +143,26 @@ function get_bounding_box(box, asInteger) {
  * Refer to this class for methods shared across different pipelines.
  */
 export class Pipeline extends Callable {
-    /**
-     * Create a new Pipeline.
-     * @param {Object} options An object containing the following properties:
-     * @param {string} [options.task] The task of the pipeline. Useful for specifying subtasks.
-     * @param {PreTrainedModel} [options.model] The model used by the pipeline.
-     * @param {PreTrainedTokenizer} [options.tokenizer=null] The tokenizer used by the pipeline (if any).
-     * @param {Processor} [options.processor=null] The processor used by the pipeline (if any).
-     */
-    constructor({ task, model, tokenizer = null, processor = null }) {
-        super();
-        this.task = task;
-        this.model = model;
-        this.tokenizer = tokenizer;
-        this.processor = processor;
-    }
+  /**
+   * Create a new Pipeline.
+   * @param {Object} options An object containing the following properties:
+   * @param {string} [options.task] The task of the pipeline. Useful for specifying subtasks.
+   * @param {PreTrainedModel} [options.model] The model used by the pipeline.
+   * @param {PreTrainedTokenizer} [options.tokenizer=null] The tokenizer used by the pipeline (if any).
+   * @param {Processor} [options.processor=null] The processor used by the pipeline (if any).
+   */
+  constructor({ task, model, tokenizer = null, processor = null }) {
+    super();
+    this.task = task;
+    this.model = model;
+    this.tokenizer = tokenizer;
+    this.processor = processor;
+  }
 
-    /** @type {DisposeType} */
-    async dispose() {
-        await this.model.dispose();
-    }
+  /** @type {DisposeType} */
+  async dispose() {
+    await this.model.dispose();
+  }
 }
 
 /**
@@ -202,7 +183,6 @@ export class Pipeline extends Callable {
  * @typedef {ModelProcessorConstructorArgs} AudioPipelineConstructorArgs An object used to instantiate an audio-based pipeline.
  * @typedef {ModelProcessorConstructorArgs} ImagePipelineConstructorArgs An object used to instantiate an image-based pipeline.
  */
-
 
 /**
  * @typedef {Object} ModelTokenizerProcessorConstructorArgs
@@ -269,65 +249,63 @@ export class Pipeline extends Callable {
  * // ]
  * ```
  */
-export class TextClassificationPipeline extends (/** @type {new (options: TextPipelineConstructorArgs) => TextClassificationPipelineType} */ (Pipeline)) {
+export class TextClassificationPipeline
+  extends /** @type {new (options: TextPipelineConstructorArgs) => TextClassificationPipelineType} */ (
+    Pipeline
+  )
+{
+  /**
+   * Create a new TextClassificationPipeline.
+   * @param {TextPipelineConstructorArgs} options An object used to instantiate the pipeline.
+   */
+  constructor(options) {
+    super(options);
+  }
 
-    /**
-     * Create a new TextClassificationPipeline.
-     * @param {TextPipelineConstructorArgs} options An object used to instantiate the pipeline.
-     */
-    constructor(options) {
-        super(options);
+  /** @type {TextClassificationPipelineCallback} */
+  async _call(texts, { top_k = 1 } = {}) {
+    // Run tokenization
+    const model_inputs = this.tokenizer(texts, {
+      padding: true,
+      truncation: true,
+    });
+
+    // Run model
+    const outputs = await this.model(model_inputs);
+
+    // TODO: Use softmax tensor function
+    const function_to_apply =
+      // @ts-expect-error TS2339
+      this.model.config.problem_type === "multi_label_classification"
+        ? (batch) => batch.sigmoid()
+        : (batch) => new Tensor("float32", softmax(batch.data), batch.dims); // single_label_classification (default)
+
+    // @ts-expect-error TS2339
+    const id2label = this.model.config.id2label;
+
+    const toReturn = [];
+    for (const batch of outputs.logits) {
+      const output = function_to_apply(batch);
+
+      const scores = await topk(output, top_k);
+
+      const values = scores[0].tolist();
+      const indices = scores[1].tolist();
+      const vals = indices.map((x, i) => ({
+        label: id2label ? id2label[x] : `LABEL_${x}`,
+        score: values[i],
+      }));
+      if (top_k === 1) {
+        toReturn.push(...vals);
+      } else {
+        toReturn.push(vals);
+      }
     }
 
-    /** @type {TextClassificationPipelineCallback} */
-    async _call(texts, {
-        top_k = 1
-    } = {}) {
-
-        // Run tokenization
-        const model_inputs = this.tokenizer(texts, {
-            padding: true,
-            truncation: true,
-        });
-
-        // Run model
-        const outputs = await this.model(model_inputs)
-
-        // TODO: Use softmax tensor function
-        const function_to_apply =
-            // @ts-expect-error TS2339
-            this.model.config.problem_type === 'multi_label_classification'
-                ? batch => batch.sigmoid()
-                : batch => new Tensor(
-                    'float32',
-                    softmax(batch.data),
-                    batch.dims,
-                ); // single_label_classification (default)
-
-        // @ts-expect-error TS2339
-        const id2label = this.model.config.id2label;
-
-        const toReturn = [];
-        for (const batch of outputs.logits) {
-            const output = function_to_apply(batch);
-
-            const scores = await topk(output, top_k);
-
-            const values = scores[0].tolist();
-            const indices = scores[1].tolist();
-            const vals = indices.map((x, i) => ({
-                label: id2label ? id2label[x] : `LABEL_${x}`,
-                score: values[i],
-            }));
-            if (top_k === 1) {
-                toReturn.push(...vals);
-            } else {
-                toReturn.push(vals);
-            }
-        }
-
-        return Array.isArray(texts) || top_k === 1 ? /** @type {TextClassificationOutput} */ (toReturn) : /** @type {TextClassificationOutput[]} */ (toReturn)[0];
-    }
+    return Array.isArray(texts) || top_k === 1
+      ? /** @type {TextClassificationOutput} */ (toReturn)
+      : /** @type {TextClassificationOutput[]} */ (toReturn)[0];
+  }
 }
 
 /**
@@ -380,77 +358,81 @@ export class TextClassificationPipeline extends (/** @type {new (options: TextPi
  * // ]
  * ```
  */
-export class TokenClassificationPipeline extends (/** @type {new (options: TextPipelineConstructorArgs) => TokenClassificationPipelineType} */ (Pipeline)) {
+export class TokenClassificationPipeline
+  extends /** @type {new (options: TextPipelineConstructorArgs) => TokenClassificationPipelineType} */ (
+    Pipeline
+  )
+{
+  /**
+   * Create a new TokenClassificationPipeline.
+   * @param {TextPipelineConstructorArgs} options An object used to instantiate the pipeline.
+   */
+  constructor(options) {
+    super(options);
+  }
 
-    /**
-     * Create a new TokenClassificationPipeline.
-     * @param {TextPipelineConstructorArgs} options An object used to instantiate the pipeline.
-     */
-    constructor(options) {
-        super(options);
-    }
+  /** @type {TokenClassificationPipelineCallback} */
+  async _call(texts, { ignore_labels = ["O"] } = {}) {
+    const isBatched = Array.isArray(texts);
 
-    /** @type {TokenClassificationPipelineCallback} */
-    async _call(texts, {
-        ignore_labels = ['O'],
-    } = {}) {
+    // Run tokenization
+    const model_inputs = this.tokenizer(isBatched ? texts : [texts], {
+      padding: true,
+      truncation: true,
+    });
 
-        const isBatched = Array.isArray(texts);
+    // Run model
+    const outputs = await this.model(model_inputs);
 
-        // Run tokenization
-        const model_inputs = this.tokenizer(isBatched ? texts : [texts], {
-            padding: true,
-            truncation: true,
-        });
+    const logits = outputs.logits;
+    // @ts-expect-error TS2339
+    const id2label = this.model.config.id2label;
 
-        // Run model
-        const outputs = await this.model(model_inputs)
+    const toReturn = [];
+    for (let i = 0; i < logits.dims[0]; ++i) {
+      const ids = model_inputs.input_ids[i];
+      const batch = logits[i];
 
-        const logits = outputs.logits;
-        // @ts-expect-error TS2339
-        const id2label = this.model.config.id2label;
+      // List of tokens that aren't ignored
+      const tokens = [];
+      for (let j = 0; j < batch.dims[0]; ++j) {
+        const tokenData = batch[j];
+        const topScoreIndex = max(tokenData.data)[1];
 
-        const toReturn = [];
-        for (let i = 0; i < logits.dims[0]; ++i) {
-            const ids = model_inputs.input_ids[i];
-            const batch = logits[i];
-
-            // List of tokens that aren't ignored
-            const tokens = [];
-            for (let j = 0; j < batch.dims[0]; ++j) {
-                const tokenData = batch[j];
-                const topScoreIndex = max(tokenData.data)[1];
-
-                const entity = id2label ? id2label[topScoreIndex] : `LABEL_${topScoreIndex}`;
-                if (ignore_labels.includes(entity)) {
-                    // We predicted a token that should be ignored. So, we skip it.
-                    continue;
-                }
-
-                // TODO add option to keep special tokens?
-                const word = this.tokenizer.decode([ids[j].item()], { skip_special_tokens: true });
-                if (word === '') {
-                    // Was a special token. So, we skip it.
-                    continue;
-                }
-
-                const scores = softmax(tokenData.data);
-
-                tokens.push({
-                    entity: entity,
-                    score: scores[topScoreIndex],
-                    index: j,
-                    word: word,
-
-                    // TODO: Add support for start and end
-                    // start: null,
-                    // end: null,
-                });
-            }
-            toReturn.push(tokens);
+        const entity = id2label
+          ? id2label[topScoreIndex]
+          : `LABEL_${topScoreIndex}`;
+        if (ignore_labels.includes(entity)) {
+          // We predicted a token that should be ignored. So, we skip it.
+          continue;
         }
-        return isBatched ? toReturn : toReturn[0];
+
+        // TODO add option to keep special tokens?
+        const word = this.tokenizer.decode([ids[j].item()], {
+          skip_special_tokens: true,
+        });
+        if (word === "") {
+          // Was a special token. So, we skip it.
+          continue;
+        }
+
+        const scores = softmax(tokenData.data);
+
+        tokens.push({
+          entity: entity,
+          score: scores[topScoreIndex],
+          index: j,
+          word: word,
+
+          // TODO: Add support for start and end
+          // start: null,
+          // end: null,
+        });
+      }
+      toReturn.push(tokens);
     }
+    return isBatched ? toReturn : toReturn[0];
+  }
 }
 
 /**
@@ -487,110 +469,107 @@ export class TokenClassificationPipeline extends (/** @type {new (options: TextP
  * // }
  * ```
  */
-export class QuestionAnsweringPipeline extends (/** @type {new (options: TextPipelineConstructorArgs) => QuestionAnsweringPipelineType} */ (Pipeline)) {
+export class QuestionAnsweringPipeline
+  extends /** @type {new (options: TextPipelineConstructorArgs) => QuestionAnsweringPipelineType} */ (
+    Pipeline
+  )
+{
+  /**
+   * Create a new QuestionAnsweringPipeline.
+   * @param {TextPipelineConstructorArgs} options An object used to instantiate the pipeline.
+   */
+  constructor(options) {
+    super(options);
+  }
 
-    /**
-     * Create a new QuestionAnsweringPipeline.
-     * @param {TextPipelineConstructorArgs} options An object used to instantiate the pipeline.
-     */
-    constructor(options) {
-        super(options);
-    }
+  /** @type {QuestionAnsweringPipelineCallback} */
+  async _call(question, context, { top_k = 1 } = {}) {
+    // Run tokenization
+    const inputs = this.tokenizer(question, {
+      text_pair: context,
+      padding: true,
+      truncation: true,
+    });
 
-    /** @type {QuestionAnsweringPipelineCallback} */
-    async _call(question, context, {
-        top_k = 1
-    } = {}) {
+    const { start_logits, end_logits } = await this.model(inputs);
+    const input_ids = inputs.input_ids.tolist();
+    const attention_mask = inputs.attention_mask.tolist();
 
-        // Run tokenization
-        const inputs = this.tokenizer(question, {
-            text_pair: context,
-            padding: true,
-            truncation: true,
+    // TODO: add support for `return_special_tokens_mask`
+    const special_tokens = this.tokenizer.all_special_ids;
+
+    /** @type {QuestionAnsweringOutput[]} */
+    const toReturn = [];
+    for (let j = 0; j < start_logits.dims[0]; ++j) {
+      const ids = input_ids[j];
+      const sepIndex = ids.findIndex(
+        (x) =>
+          // We use == to match bigint with number
+          // @ts-ignore
+          x == this.tokenizer.sep_token_id,
+      );
+
+      const valid_mask = attention_mask[j].map(
+        (y, ix) =>
+          y == 1 &&
+          (ix === 0 || // is cls_token
+            (ix > sepIndex &&
+              special_tokens.findIndex((x) => x == ids[ix]) === -1)), // token is not a special token (special_tokens_mask == 0)
+      );
+
+      const start = start_logits[j].tolist();
+      const end = end_logits[j].tolist();
+
+      // Now, we mask out values that can't be in the answer
+      // NOTE: We keep the cls_token unmasked (some models use it to indicate unanswerable questions)
+      for (let i = 1; i < start.length; ++i) {
+        if (
+          attention_mask[j] == 0 || // is part of padding
+          i <= sepIndex || // is before the sep_token
+          special_tokens.findIndex((x) => x == ids[i]) !== -1 // Is a special token
+        ) {
+          // Make sure non-context indexes in the tensor cannot contribute to the softmax
+          start[i] = -Infinity;
+          end[i] = -Infinity;
+        }
+      }
+
+      // Normalize logits and spans to retrieve the answer
+      const start_scores = softmax(start).map((x, i) => [x, i]);
+      const end_scores = softmax(end).map((x, i) => [x, i]);
+
+      // Mask CLS
+      start_scores[0][0] = 0;
+      end_scores[0][0] = 0;
+
+      // Generate all valid spans and select best ones
+      const options = product(start_scores, end_scores)
+        .filter((x) => x[0][1] <= x[1][1])
+        .map((x) => [x[0][1], x[1][1], x[0][0] * x[1][0]])
+        .sort((a, b) => b[2] - a[2]);
+
+      for (let k = 0; k < Math.min(options.length, top_k); ++k) {
+        const [start, end, score] = options[k];
+
+        const answer_tokens = ids.slice(start, end + 1);
+
+        const answer = this.tokenizer.decode(answer_tokens, {
+          skip_special_tokens: true,
         });
 
-        const { start_logits, end_logits } = await this.model(inputs);
-        const input_ids = inputs.input_ids.tolist();
-        const attention_mask = inputs.attention_mask.tolist();
-
-        // TODO: add support for `return_special_tokens_mask`
-        const special_tokens = this.tokenizer.all_special_ids;
-
-        /** @type {QuestionAnsweringOutput[]} */
-        const toReturn = [];
-        for (let j = 0; j < start_logits.dims[0]; ++j) {
-            const ids = input_ids[j];
-            const sepIndex = ids.findIndex(x =>
-                // We use == to match bigint with number
-                // @ts-ignore
-                x == this.tokenizer.sep_token_id
-            );
-
-
-            const valid_mask = attention_mask[j].map((y, ix) => (
-                y == 1
-                && (
-                    ix === 0 // is cls_token
-                    || (
-                        ix > sepIndex
-                        && special_tokens.findIndex(x => x == ids[ix]) === -1 // token is not a special token (special_tokens_mask == 0)
-                    )
-                )
-            ));
-
-            const start = start_logits[j].tolist();
-            const end = end_logits[j].tolist();
-
-            // Now, we mask out values that can't be in the answer
-            // NOTE: We keep the cls_token unmasked (some models use it to indicate unanswerable questions)
-            for (let i = 1; i < start.length; ++i) {
-                if (
-                    attention_mask[j] == 0 // is part of padding
-                    || i <= sepIndex // is before the sep_token
-                    || special_tokens.findIndex(x => x == ids[i]) !== -1 // Is a special token
-                ) {
-                    // Make sure non-context indexes in the tensor cannot contribute to the softmax
-                    start[i] = -Infinity;
-                    end[i] = -Infinity;
-                }
-            }
-
-            // Normalize logits and spans to retrieve the answer
-            const start_scores = softmax(start).map((x, i) => [x, i]);
-            const end_scores = softmax(end).map((x, i) => [x, i]);
-
-            // Mask CLS
-            start_scores[0][0] = 0;
-            end_scores[0][0] = 0;
-
-            // Generate all valid spans and select best ones
-            const options = product(start_scores, end_scores)
-                .filter(x => x[0][1] <= x[1][1])
-                .map(x => [x[0][1], x[1][1], x[0][0] * x[1][0]])
-                .sort((a, b) => b[2] - a[2]);
-
-            for (let k = 0; k < Math.min(options.length, top_k); ++k) {
-                const [start, end, score] = options[k];
-
-                const answer_tokens = ids.slice(start, end + 1)
-
-                const answer = this.tokenizer.decode(answer_tokens, {
-                    skip_special_tokens: true,
-                });
-
-                // TODO add start and end?
-                // NOTE: HF returns character index
-                toReturn.push({
-                    answer, score
-                });
-            }
-        }
-
-        // Mimic HF's return type based on top_k
-        return (top_k === 1) ? toReturn[0] : toReturn;
+        // TODO add start and end?
+        // NOTE: HF returns character index
+        toReturn.push({
+          answer,
+          score,
+        });
+      }
     }
-}
 
+    // Mimic HF's return type based on top_k
+    return top_k === 1 ? toReturn[0] : toReturn;
+  }
+}
 
 /**
  * @typedef {Object} FillMaskSingle
@@ -637,70 +616,75 @@ export class QuestionAnsweringPipeline extends (/** @type {new (options: TextPip
  * // [{ token_str: 'spiral', score: 0.6299987435340881, token: 14061, sequence: 'The Milky Way is a spiral galaxy.' }]
  * ```
  */
-export class FillMaskPipeline extends (/** @type {new (options: TextPipelineConstructorArgs) => FillMaskPipelineType} */ (Pipeline)) {
+export class FillMaskPipeline
+  extends /** @type {new (options: TextPipelineConstructorArgs) => FillMaskPipelineType} */ (
+    Pipeline
+  )
+{
+  /**
+   * Create a new FillMaskPipeline.
+   * @param {TextPipelineConstructorArgs} options An object used to instantiate the pipeline.
+   */
+  constructor(options) {
+    super(options);
+  }
 
-    /**
-     * Create a new FillMaskPipeline.
-     * @param {TextPipelineConstructorArgs} options An object used to instantiate the pipeline.
-     */
-    constructor(options) {
-        super(options);
+  /** @type {FillMaskPipelineCallback} */
+  async _call(texts, { top_k = 5 } = {}) {
+    // Run tokenization
+    const model_inputs = this.tokenizer(texts, {
+      padding: true,
+      truncation: true,
+    });
+
+    // Run model
+    const { logits } = await this.model(model_inputs);
+
+    const toReturn = [];
+
+    /** @type {bigint[][]} */
+    const input_ids = model_inputs.input_ids.tolist();
+    for (let i = 0; i < input_ids.length; ++i) {
+      const ids = input_ids[i];
+      const mask_token_index = ids.findIndex(
+        (x) =>
+          // We use == to match bigint with number
+          // @ts-ignore
+          x == this.tokenizer.mask_token_id,
+      );
+      if (mask_token_index === -1) {
+        throw Error(
+          `Mask token (${this.tokenizer.mask_token}) not found in text.`,
+        );
+      }
+      const itemLogits = logits[i][mask_token_index];
+
+      const scores = await topk(
+        new Tensor("float32", softmax(itemLogits.data), itemLogits.dims),
+        top_k,
+      );
+      const values = scores[0].tolist();
+      const indices = scores[1].tolist();
+
+      toReturn.push(
+        indices.map((x, i) => {
+          const sequence = ids.slice();
+          sequence[mask_token_index] = x;
+
+          return {
+            score: values[i],
+            token: Number(x),
+            token_str: this.tokenizer.decode([x]),
+            sequence: this.tokenizer.decode(sequence, {
+              skip_special_tokens: true,
+            }),
+          };
+        }),
+      );
     }
-
-    /** @type {FillMaskPipelineCallback} */
-    async _call(texts, {
-        top_k = 5
-    } = {}) {
-
-        // Run tokenization
-        const model_inputs = this.tokenizer(texts, {
-            padding: true,
-            truncation: true,
-        });
-
-        // Run model
-        const { logits } = await this.model(model_inputs)
-
-        const toReturn = [];
-
-        /** @type {bigint[][]} */
-        const input_ids = model_inputs.input_ids.tolist();
-        for (let i = 0; i < input_ids.length; ++i) {
-            const ids = input_ids[i];
-            const mask_token_index = ids.findIndex(x =>
-                // We use == to match bigint with number
-                // @ts-ignore
-                x == this.tokenizer.mask_token_id
-            );
-            if (mask_token_index === -1) {
-                throw Error(`Mask token (${this.tokenizer.mask_token}) not found in text.`)
-            }
-            const itemLogits = logits[i][mask_token_index];
-
-            const scores = await topk(new Tensor(
-                'float32',
-                softmax(itemLogits.data),
-                itemLogits.dims,
-            ), top_k);
-            const values = scores[0].tolist();
-            const indices = scores[1].tolist();
-
-            toReturn.push(indices.map((x, i) => {
-                const sequence = ids.slice();
-                sequence[mask_token_index] = x;
-
-                return {
-                    score: values[i],
-                    token: Number(x),
-                    token_str: this.tokenizer.decode([x]),
-                    sequence: this.tokenizer.decode(sequence, { skip_special_tokens: true }),
-                }
-            }));
-        }
-        return Array.isArray(texts) ? toReturn : toReturn[0];
-    }
+    return Array.isArray(texts) ? toReturn : toReturn[0];
+  }
 }
-
 
 /**
  * @typedef {Object} Text2TextGenerationSingle
@@ -727,67 +711,80 @@ export class FillMaskPipeline extends (/** @type {new (options: TextPipelineCons
  * // [{ generated_text: "To become more healthy, you can: 1. Eat a balanced diet with plenty of fruits, vegetables, whole grains, lean proteins, and healthy fats. 2. Stay hydrated by drinking plenty of water. 3. Get enough sleep and manage stress levels. 4. Avoid smoking and excessive alcohol consumption. 5. Regularly exercise and maintain a healthy weight. 6. Practice good hygiene and sanitation. 7. Seek medical attention if you experience any health issues." }]
  * ```
  */
-export class Text2TextGenerationPipeline extends (/** @type {new (options: TextPipelineConstructorArgs) => Text2TextGenerationPipelineType} */ (Pipeline)) {
-    /** @type {'generated_text'} */
-    _key = 'generated_text';
+export class Text2TextGenerationPipeline
+  extends /** @type {new (options: TextPipelineConstructorArgs) => Text2TextGenerationPipelineType} */ (
+    Pipeline
+  )
+{
+  /** @type {'generated_text'} */
+  _key = "generated_text";
 
-    /**
-     * Create a new Text2TextGenerationPipeline.
-     * @param {TextPipelineConstructorArgs} options An object used to instantiate the pipeline.
-     */
-    constructor(options) {
-        super(options);
+  /**
+   * Create a new Text2TextGenerationPipeline.
+   * @param {TextPipelineConstructorArgs} options An object used to instantiate the pipeline.
+   */
+  constructor(options) {
+    super(options);
+  }
+
+  /** @type {Text2TextGenerationPipelineCallback} */
+  async _call(texts, generate_kwargs = {}) {
+    if (!Array.isArray(texts)) {
+      texts = [texts];
     }
 
-    /** @type {Text2TextGenerationPipelineCallback} */
-    async _call(texts, generate_kwargs = {}) {
-        if (!Array.isArray(texts)) {
-            texts = [texts];
-        }
-
-
-        // Add global prefix, if present
-        // @ts-expect-error TS2339
-        if (this.model.config.prefix) {
-            // @ts-expect-error TS2339
-            texts = texts.map(x => this.model.config.prefix + x)
-        }
-
-        // Handle task specific params:
-        // @ts-expect-error TS2339
-        const task_specific_params = this.model.config.task_specific_params
-        if (task_specific_params && task_specific_params[this.task]) {
-            // Add prefixes, if present
-            if (task_specific_params[this.task].prefix) {
-                texts = texts.map(x => task_specific_params[this.task].prefix + x)
-            }
-
-            // TODO update generation config
-        }
-
-        const tokenizer = this.tokenizer;
-        const tokenizer_options = {
-            padding: true,
-            truncation: true,
-        }
-        let inputs;
-        if (this instanceof TranslationPipeline && '_build_translation_inputs' in tokenizer) {
-            // TODO: move to Translation pipeline?
-            // Currently put here to avoid code duplication
-            // @ts-ignore
-            inputs = tokenizer._build_translation_inputs(texts, tokenizer_options, generate_kwargs);
-
-        } else {
-            inputs = tokenizer(texts, tokenizer_options);
-        }
-
-        const outputTokenIds = await this.model.generate({ ...inputs, ...generate_kwargs });
-        return tokenizer.batch_decode(/** @type {Tensor} */(outputTokenIds), {
-            skip_special_tokens: true,
-        }).map(text => ({ [this._key]: text }));
+    // Add global prefix, if present
+    // @ts-expect-error TS2339
+    if (this.model.config.prefix) {
+      // @ts-expect-error TS2339
+      texts = texts.map((x) => this.model.config.prefix + x);
     }
+
+    // Handle task specific params:
+    // @ts-expect-error TS2339
+    const task_specific_params = this.model.config.task_specific_params;
+    if (task_specific_params && task_specific_params[this.task]) {
+      // Add prefixes, if present
+      if (task_specific_params[this.task].prefix) {
+        texts = texts.map((x) => task_specific_params[this.task].prefix + x);
+      }
+
+      // TODO update generation config
+    }
+
+    const tokenizer = this.tokenizer;
+    const tokenizer_options = {
+      padding: true,
+      truncation: true,
+    };
+    let inputs;
+    if (
+      this instanceof TranslationPipeline &&
+      "_build_translation_inputs" in tokenizer
+    ) {
+      // TODO: move to Translation pipeline?
+      // Currently put here to avoid code duplication
+      // @ts-ignore
+      inputs = tokenizer._build_translation_inputs(
+        texts,
+        tokenizer_options,
+        generate_kwargs,
+      );
+    } else {
+      inputs = tokenizer(texts, tokenizer_options);
+    }
+
+    const outputTokenIds = await this.model.generate({
+      ...inputs,
+      ...generate_kwargs,
+    });
+    return tokenizer
+      .batch_decode(/** @type {Tensor} */ (outputTokenIds), {
+        skip_special_tokens: true,
+      })
+      .map((text) => ({ [this._key]: text }));
+  }
 }
-
 
 /**
  * @typedef {Object} SummarizationSingle
@@ -822,19 +819,22 @@ export class Text2TextGenerationPipeline extends (/** @type {new (options: TextP
  * // [{ summary_text: ' The Eiffel Tower is about the same height as an 81-storey building and the tallest structure in Paris. It is the second tallest free-standing structure in France after the Millau Viaduct.' }]
  * ```
  */
-export class SummarizationPipeline extends (/** @type {new (options: TextPipelineConstructorArgs) => SummarizationPipelineType} */ (/** @type {any} */ (Text2TextGenerationPipeline))) {
-    /** @type {'summary_text'} */
-    _key = 'summary_text';
+export class SummarizationPipeline
+  extends /** @type {new (options: TextPipelineConstructorArgs) => SummarizationPipelineType} */ (
+    /** @type {any} */ (Text2TextGenerationPipeline)
+  )
+{
+  /** @type {'summary_text'} */
+  _key = "summary_text";
 
-    /**
-     * Create a new SummarizationPipeline.
-     * @param {TextPipelineConstructorArgs} options An object used to instantiate the pipeline.
-     */
-    constructor(options) {
-        super(options);
-    }
+  /**
+   * Create a new SummarizationPipeline.
+   * @param {TextPipelineConstructorArgs} options An object used to instantiate the pipeline.
+   */
+  constructor(options) {
+    super(options);
+  }
 }
-
 
 /**
  * @typedef {Object} TranslationSingle
@@ -894,21 +894,25 @@ export class SummarizationPipeline extends (/** @type {new (options: TextPipelin
  * // [{ translation_text: 'Le chef des Nations affirme qu 'il n 'y a military solution in Syria.' }]
  * ```
  */
-export class TranslationPipeline extends (/** @type {new (options: TextPipelineConstructorArgs) => TranslationPipelineType} */ (/** @type {any} */ (Text2TextGenerationPipeline))) {
-    /** @type {'translation_text'} */
-    _key = 'translation_text';
+export class TranslationPipeline
+  extends /** @type {new (options: TextPipelineConstructorArgs) => TranslationPipelineType} */ (
+    /** @type {any} */ (Text2TextGenerationPipeline)
+  )
+{
+  /** @type {'translation_text'} */
+  _key = "translation_text";
 
-    /**
-     * Create a new TranslationPipeline.
-     * @param {TextPipelineConstructorArgs} options An object used to instantiate the pipeline.
-     */
-    constructor(options) {
-        super(options);
-    }
+  /**
+   * Create a new TranslationPipeline.
+   * @param {TextPipelineConstructorArgs} options An object used to instantiate the pipeline.
+   */
+  constructor(options) {
+    super(options);
+  }
 }
 
 function isChat(x) {
-    return Array.isArray(x) && x.every(x => 'role' in x && 'content' in x);
+  return Array.isArray(x) && x.every((x) => "role" in x && "content" in x);
 }
 
 /**
@@ -981,102 +985,117 @@ function isChat(x) {
  * // }]
  * ```
  */
-export class TextGenerationPipeline extends (/** @type {new (options: TextPipelineConstructorArgs) => TextGenerationPipelineType} */ (Pipeline)) {
+export class TextGenerationPipeline
+  extends /** @type {new (options: TextPipelineConstructorArgs) => TextGenerationPipelineType} */ (
+    Pipeline
+  )
+{
+  /**
+   * Create a new TextGenerationPipeline.
+   * @param {TextPipelineConstructorArgs} options An object used to instantiate the pipeline.
+   */
+  constructor(options) {
+    super(options);
+  }
 
-    /**
-     * Create a new TextGenerationPipeline.
-     * @param {TextPipelineConstructorArgs} options An object used to instantiate the pipeline.
-     */
-    constructor(options) {
-        super(options);
+  /** @type {TextGenerationPipelineCallback} */
+  async _call(texts, generate_kwargs = {}) {
+    let isBatched = false;
+    let isChatInput = false;
+
+    // By default, do not add special tokens, unless the tokenizer specifies otherwise
+    let add_special_tokens =
+      generate_kwargs.add_special_tokens ??
+      (this.tokenizer.add_bos_token || this.tokenizer.add_eos_token) ??
+      false;
+
+    // Normalize inputs
+    /** @type {string[]} */
+    let inputs;
+    if (typeof texts === "string") {
+      inputs = texts = [texts];
+    } else if (
+      Array.isArray(texts) &&
+      texts.every((x) => typeof x === "string")
+    ) {
+      isBatched = true;
+      inputs = /** @type {string[]} */ (texts);
+    } else {
+      if (isChat(texts)) {
+        texts = [/** @type {Chat} */ (texts)];
+      } else if (Array.isArray(texts) && texts.every(isChat)) {
+        isBatched = true;
+      } else {
+        throw new Error(
+          "Input must be a string, an array of strings, a Chat, or an array of Chats",
+        );
+      }
+      isChatInput = true;
+
+      // If the input is a chat, we need to apply the chat template
+      inputs = /** @type {string[]} */ (
+        /** @type {Chat[]} */ (texts).map((x) =>
+          this.tokenizer.apply_chat_template(x, {
+            tokenize: false,
+            add_generation_prompt: true,
+          }),
+        )
+      );
+      add_special_tokens = false; // Chat template handles this already
     }
 
-    /** @type {TextGenerationPipelineCallback} */
-    async _call(texts, generate_kwargs = {}) {
-        let isBatched = false;
-        let isChatInput = false;
+    // By default, return full text
+    const return_full_text = isChatInput
+      ? false
+      : (generate_kwargs.return_full_text ?? true);
 
-        // By default, do not add special tokens, unless the tokenizer specifies otherwise
-        let add_special_tokens = generate_kwargs.add_special_tokens
-            ?? (this.tokenizer.add_bos_token || this.tokenizer.add_eos_token)
-            ?? false;
+    this.tokenizer.padding_side = "left";
+    const text_inputs = this.tokenizer(inputs, {
+      add_special_tokens,
+      padding: true,
+      truncation: true,
+    });
 
-        // Normalize inputs
-        /** @type {string[]} */
-        let inputs;
-        if (typeof texts === 'string') {
-            inputs = texts = [texts];
-        } else if (Array.isArray(texts) && texts.every(x => typeof x === 'string')) {
-            isBatched = true;
-            inputs = /** @type {string[]} */(texts);
-        } else {
-            if (isChat(texts)) {
-                texts = [/** @type {Chat} */(texts)];
-            } else if (Array.isArray(texts) && texts.every(isChat)) {
-                isBatched = true;
-            } else {
-                throw new Error('Input must be a string, an array of strings, a Chat, or an array of Chats');
-            }
-            isChatInput = true;
+    const outputTokenIds = /** @type {Tensor} */ (
+      await this.model.generate({
+        ...text_inputs,
+        ...generate_kwargs,
+      })
+    );
 
-            // If the input is a chat, we need to apply the chat template
-            inputs = /** @type {string[]} */(/** @type {Chat[]} */ (texts).map(
-                x => this.tokenizer.apply_chat_template(x, {
-                    tokenize: false,
-                    add_generation_prompt: true,
-                })
-            ));
-            add_special_tokens = false; // Chat template handles this already
-        }
+    const decoded = this.tokenizer.batch_decode(outputTokenIds, {
+      skip_special_tokens: true,
+    });
 
-        // By default, return full text
-        const return_full_text = isChatInput
-            ? false
-            : generate_kwargs.return_full_text ?? true;
-
-        this.tokenizer.padding_side = 'left';
-        const text_inputs = this.tokenizer(inputs, {
-            add_special_tokens,
-            padding: true,
-            truncation: true,
-        });
-
-        const outputTokenIds = /** @type {Tensor} */(await this.model.generate({
-            ...text_inputs,
-            ...generate_kwargs
-        }));
-
-        const decoded = this.tokenizer.batch_decode(outputTokenIds, {
-            skip_special_tokens: true,
-        });
-
-        let promptLengths;
-        if (!return_full_text && text_inputs.input_ids.dims.at(-1) > 0) {
-            promptLengths = this.tokenizer.batch_decode(text_inputs.input_ids, {
-                skip_special_tokens: true,
-            }).map(x => x.length);
-        }
-
-        /** @type {TextGenerationOutput[]} */
-        const toReturn = Array.from({ length: texts.length }, _ => []);
-        for (let i = 0; i < decoded.length; ++i) {
-            const textIndex = Math.floor(i / outputTokenIds.dims[0] * texts.length);
-
-            if (promptLengths) {
-                // Trim the decoded text to only include the generated part
-                decoded[i] = decoded[i].slice(promptLengths[textIndex]);
-            }
-            toReturn[textIndex].push({
-                generated_text: isChatInput
-                    ? [
-                        ...((/** @type {Chat[]} */(texts)[textIndex])),
-                        { role: 'assistant', content: decoded[i] },
-                    ]
-                    : decoded[i]
-            });
-        }
-        return (!isBatched && toReturn.length === 1) ? toReturn[0] : toReturn;
+    let promptLengths;
+    if (!return_full_text && text_inputs.input_ids.dims.at(-1) > 0) {
+      promptLengths = this.tokenizer
+        .batch_decode(text_inputs.input_ids, {
+          skip_special_tokens: true,
+        })
+        .map((x) => x.length);
     }
+
+    /** @type {TextGenerationOutput[]} */
+    const toReturn = Array.from({ length: texts.length }, (_) => []);
+    for (let i = 0; i < decoded.length; ++i) {
+      const textIndex = Math.floor((i / outputTokenIds.dims[0]) * texts.length);
+
+      if (promptLengths) {
+        // Trim the decoded text to only include the generated part
+        decoded[i] = decoded[i].slice(promptLengths[textIndex]);
+      }
+      toReturn[textIndex].push({
+        generated_text: isChatInput
+          ? [
+              .../** @type {Chat[]} */ (texts)[textIndex],
+              { role: "assistant", content: decoded[i] },
+            ]
+          : decoded[i],
+      });
+    }
+    return !isBatched && toReturn.length === 1 ? toReturn[0] : toReturn;
+  }
 }
 
 /**
@@ -1135,99 +1154,108 @@ export class TextGenerationPipeline extends (/** @type {new (options: TextPipeli
  * // }
  * ```
  */
-export class ZeroShotClassificationPipeline extends (/** @type {new (options: TextPipelineConstructorArgs) => ZeroShotClassificationPipelineType} */ (Pipeline)) {
-    /**
-     * Create a new ZeroShotClassificationPipeline.
-     * @param {TextPipelineConstructorArgs} options An object used to instantiate the pipeline.
-     */
-    constructor(options) {
-        super(options);
+export class ZeroShotClassificationPipeline
+  extends /** @type {new (options: TextPipelineConstructorArgs) => ZeroShotClassificationPipelineType} */ (
+    Pipeline
+  )
+{
+  /**
+   * Create a new ZeroShotClassificationPipeline.
+   * @param {TextPipelineConstructorArgs} options An object used to instantiate the pipeline.
+   */
+  constructor(options) {
+    super(options);
 
-        // Use model config to get label2id mapping
-        this.label2id = Object.fromEntries(
-            Object.entries((/** @type {any} */(this).model).config.label2id).map(
-                ([k, v]) => [k.toLowerCase(), v]
-            )
-        );
+    // Use model config to get label2id mapping
+    this.label2id = Object.fromEntries(
+      Object.entries(/** @type {any} */ (this).model.config.label2id).map(
+        ([k, v]) => [k.toLowerCase(), v],
+      ),
+    );
 
-        this.entailment_id = this.label2id['entailment'];
-        if (this.entailment_id === undefined) {
-            console.warn("Could not find 'entailment' in label2id mapping. Using 2 as entailment_id.");
-            this.entailment_id = 2;
-        }
-
-        this.contradiction_id = this.label2id['contradiction'] ?? this.label2id['not_entailment'];
-        if (this.contradiction_id === undefined) {
-            console.warn("Could not find 'contradiction' in label2id mapping. Using 0 as contradiction_id.");
-            this.contradiction_id = 0;
-        }
+    this.entailment_id = this.label2id["entailment"];
+    if (this.entailment_id === undefined) {
+      console.warn(
+        "Could not find 'entailment' in label2id mapping. Using 2 as entailment_id.",
+      );
+      this.entailment_id = 2;
     }
 
-    /** @type {ZeroShotClassificationPipelineCallback} */
-    async _call(texts, candidate_labels, {
-        hypothesis_template = "This example is {}.",
-        multi_label = false,
-    } = {}) {
-
-        const isBatched = Array.isArray(texts);
-        if (!isBatched) {
-            texts = [/** @type {string} */ (texts)];
-        }
-        if (!Array.isArray(candidate_labels)) {
-            candidate_labels = [candidate_labels];
-        }
-
-        // Insert labels into hypothesis template
-        const hypotheses = candidate_labels.map(
-            x => hypothesis_template.replace('{}', x)
-        );
-
-        // How to perform the softmax over the logits:
-        //  - true:  softmax over the entailment vs. contradiction dim for each label independently
-        //  - false: softmax the "entailment" logits over all candidate labels
-        const softmaxEach = multi_label || candidate_labels.length === 1;
-
-        /** @type {ZeroShotClassificationOutput[]} */
-        const toReturn = [];
-        for (const premise of texts) {
-            const entails_logits = [];
-
-            for (const hypothesis of hypotheses) {
-                const inputs = this.tokenizer(premise, {
-                    text_pair: hypothesis,
-                    padding: true,
-                    truncation: true,
-                })
-                const outputs = await this.model(inputs)
-
-                if (softmaxEach) {
-                    entails_logits.push([
-                        outputs.logits.data[this.contradiction_id],
-                        outputs.logits.data[this.entailment_id]
-                    ])
-                } else {
-                    entails_logits.push(outputs.logits.data[this.entailment_id])
-                }
-            }
-
-            /** @type {number[]} */
-            const scores = softmaxEach
-                ? entails_logits.map(x => softmax(x)[1])
-                : softmax(entails_logits);
-
-            // Sort by scores (desc) and return scores with indices
-            const scores_sorted = scores
-                .map((x, i) => [x, i])
-                .sort((a, b) => (b[0] - a[0]));
-
-            toReturn.push({
-                sequence: premise,
-                labels: scores_sorted.map(x => candidate_labels[x[1]]),
-                scores: scores_sorted.map(x => x[0]),
-            });
-        }
-        return isBatched ? toReturn : toReturn[0];
+    this.contradiction_id =
+      this.label2id["contradiction"] ?? this.label2id["not_entailment"];
+    if (this.contradiction_id === undefined) {
+      console.warn(
+        "Could not find 'contradiction' in label2id mapping. Using 0 as contradiction_id.",
+      );
+      this.contradiction_id = 0;
     }
+  }
+
+  /** @type {ZeroShotClassificationPipelineCallback} */
+  async _call(
+    texts,
+    candidate_labels,
+    { hypothesis_template = "This example is {}.", multi_label = false } = {},
+  ) {
+    const isBatched = Array.isArray(texts);
+    if (!isBatched) {
+      texts = [/** @type {string} */ (texts)];
+    }
+    if (!Array.isArray(candidate_labels)) {
+      candidate_labels = [candidate_labels];
+    }
+
+    // Insert labels into hypothesis template
+    const hypotheses = candidate_labels.map((x) =>
+      hypothesis_template.replace("{}", x),
+    );
+
+    // How to perform the softmax over the logits:
+    //  - true:  softmax over the entailment vs. contradiction dim for each label independently
+    //  - false: softmax the "entailment" logits over all candidate labels
+    const softmaxEach = multi_label || candidate_labels.length === 1;
+
+    /** @type {ZeroShotClassificationOutput[]} */
+    const toReturn = [];
+    for (const premise of texts) {
+      const entails_logits = [];
+
+      for (const hypothesis of hypotheses) {
+        const inputs = this.tokenizer(premise, {
+          text_pair: hypothesis,
+          padding: true,
+          truncation: true,
+        });
+        const outputs = await this.model(inputs);
+
+        if (softmaxEach) {
+          entails_logits.push([
+            outputs.logits.data[this.contradiction_id],
+            outputs.logits.data[this.entailment_id],
+          ]);
+        } else {
+          entails_logits.push(outputs.logits.data[this.entailment_id]);
+        }
+      }
+
+      /** @type {number[]} */
+      const scores = softmaxEach
+        ? entails_logits.map((x) => softmax(x)[1])
+        : softmax(entails_logits);
+
+      // Sort by scores (desc) and return scores with indices
+      const scores_sorted = scores
+        .map((x, i) => [x, i])
+        .sort((a, b) => b[0] - a[0]);
+
+      toReturn.push({
+        sequence: premise,
+        labels: scores_sorted.map((x) => candidate_labels[x[1]]),
+        scores: scores_sorted.map((x) => x[0]),
+      });
+    }
+    return isBatched ? toReturn : toReturn[0];
+  }
 }
 
 /**
@@ -1292,71 +1320,77 @@ export class ZeroShotClassificationPipeline extends (/** @type {new (options: Te
  * // }
  * ```
  */
-export class FeatureExtractionPipeline extends (/** @type {new (options: TextPipelineConstructorArgs) => FeatureExtractionPipelineType} */ (Pipeline)) {
-    /**
-     * Create a new FeatureExtractionPipeline.
-     * @param {TextPipelineConstructorArgs} options An object used to instantiate the pipeline.
-     */
-    constructor(options) {
-        super(options);
+export class FeatureExtractionPipeline
+  extends /** @type {new (options: TextPipelineConstructorArgs) => FeatureExtractionPipelineType} */ (
+    Pipeline
+  )
+{
+  /**
+   * Create a new FeatureExtractionPipeline.
+   * @param {TextPipelineConstructorArgs} options An object used to instantiate the pipeline.
+   */
+  constructor(options) {
+    super(options);
+  }
+
+  /** @type {FeatureExtractionPipelineCallback} */
+  async _call(
+    texts,
+    {
+      pooling = /** @type {'none'} */ ("none"),
+      normalize = false,
+      quantize = false,
+      precision = /** @type {'binary'} */ ("binary"),
+    } = {},
+  ) {
+    // Run tokenization
+    const model_inputs = this.tokenizer(texts, {
+      padding: true,
+      truncation: true,
+    });
+
+    // Run model
+    const outputs = await this.model(model_inputs);
+
+    // TODO: Provide warning to the user that they might be using model which was not exported
+    // specifically for feature extraction
+    // console.log(this.model.config)
+    // console.log(outputs)
+
+    /** @type {Tensor} */
+    let result =
+      outputs.last_hidden_state ?? outputs.logits ?? outputs.token_embeddings;
+
+    switch (pooling) {
+      case "none":
+        // Skip pooling
+        break;
+      case "mean":
+        result = mean_pooling(result, model_inputs.attention_mask);
+        break;
+      case "first_token":
+      case "cls":
+        result = result.slice(null, 0);
+        break;
+      case "last_token":
+      case "eos":
+        result = result.slice(null, -1);
+        break;
+      default:
+        throw Error(`Pooling method '${pooling}' not supported.`);
     }
 
-    /** @type {FeatureExtractionPipelineCallback} */
-    async _call(texts, {
-        pooling = /** @type {'none'} */('none'),
-        normalize = false,
-        quantize = false,
-        precision = /** @type {'binary'} */('binary'),
-    } = {}) {
-
-        // Run tokenization
-        const model_inputs = this.tokenizer(texts, {
-            padding: true,
-            truncation: true,
-        });
-
-        // Run model
-        const outputs = await this.model(model_inputs)
-
-        // TODO: Provide warning to the user that they might be using model which was not exported
-        // specifically for feature extraction
-        // console.log(this.model.config)
-        // console.log(outputs)
-
-        /** @type {Tensor} */
-        let result = outputs.last_hidden_state ?? outputs.logits ?? outputs.token_embeddings;
-
-        switch (pooling) {
-            case 'none':
-                // Skip pooling
-                break;
-            case 'mean':
-                result = mean_pooling(result, model_inputs.attention_mask);
-                break;
-            case 'first_token':
-            case 'cls':
-                result = result.slice(null, 0);
-                break;
-            case 'last_token':
-            case 'eos':
-                result = result.slice(null, -1);
-                break;
-            default:
-                throw Error(`Pooling method '${pooling}' not supported.`);
-        }
-
-        if (normalize) {
-            result = result.normalize(2, -1);
-        }
-
-        if (quantize) {
-            result = quantize_embeddings(result, precision);
-        }
-
-        return result;
+    if (normalize) {
+      result = result.normalize(2, -1);
     }
+
+    if (quantize) {
+      result = quantize_embeddings(result, precision);
+    }
+
+    return result;
+  }
 }
-
 
 /**
  * @typedef {Object} ImageFeatureExtractionPipelineOptions Parameters specific to image feature extraction pipelines.
@@ -1400,37 +1434,40 @@ export class FeatureExtractionPipeline extends (/** @type {new (options: TextPip
  * // }
  * ```
  */
-export class ImageFeatureExtractionPipeline extends (/** @type {new (options: ImagePipelineConstructorArgs) => ImageFeatureExtractionPipelineType} */ (Pipeline)) {
-    /**
-     * Create a new ImageFeatureExtractionPipeline.
-     * @param {ImagePipelineConstructorArgs} options An object used to instantiate the pipeline.
-     */
-    constructor(options) {
-        super(options);
+export class ImageFeatureExtractionPipeline
+  extends /** @type {new (options: ImagePipelineConstructorArgs) => ImageFeatureExtractionPipelineType} */ (
+    Pipeline
+  )
+{
+  /**
+   * Create a new ImageFeatureExtractionPipeline.
+   * @param {ImagePipelineConstructorArgs} options An object used to instantiate the pipeline.
+   */
+  constructor(options) {
+    super(options);
+  }
+
+  /** @type {ImageFeatureExtractionPipelineCallback} */
+  async _call(images, { pool = null } = {}) {
+    const preparedImages = await prepareImages(images);
+    const { pixel_values } = await this.processor(preparedImages);
+    const outputs = await this.model({ pixel_values });
+
+    /** @type {Tensor} */
+    let result;
+    if (pool) {
+      if (!("pooler_output" in outputs)) {
+        throw Error(
+          `No pooled output was returned. Make sure the model has a 'pooler' layer when using the 'pool' option.`,
+        );
+      }
+      result = outputs.pooler_output;
+    } else {
+      result =
+        outputs.last_hidden_state ?? outputs.logits ?? outputs.image_embeds;
     }
-
-    /** @type {ImageFeatureExtractionPipelineCallback} */
-    async _call(images, {
-        pool = null,
-    } = {}) {
-
-        const preparedImages = await prepareImages(images);
-        const { pixel_values } = await this.processor(preparedImages);
-        const outputs = await this.model({ pixel_values });
-
-        /** @type {Tensor} */
-        let result;
-        if (pool) {
-            if (!('pooler_output' in outputs)) {
-                throw Error(`No pooled output was returned. Make sure the model has a 'pooler' layer when using the 'pool' option.`);
-            }
-            result = outputs.pooler_output;
-
-        } else {
-            result = outputs.last_hidden_state ?? outputs.logits ?? outputs.image_embeds;
-        }
-        return result;
-    }
+    return result;
+  }
 }
 
 // TODO
@@ -1488,51 +1525,50 @@ export class ImageFeatureExtractionPipeline extends (/** @type {new (options: Im
  * // ]
  * ```
  */
-export class AudioClassificationPipeline extends (/** @type {new (options: AudioPipelineConstructorArgs) => AudioClassificationPipelineType} */ (Pipeline)) {
+export class AudioClassificationPipeline
+  extends /** @type {new (options: AudioPipelineConstructorArgs) => AudioClassificationPipelineType} */ (
+    Pipeline
+  )
+{
+  /**
+   * Create a new AudioClassificationPipeline.
+   * @param {AudioPipelineConstructorArgs} options An object used to instantiate the pipeline.
+   */
+  constructor(options) {
+    super(options);
+  }
 
-    /**
-     * Create a new AudioClassificationPipeline.
-     * @param {AudioPipelineConstructorArgs} options An object used to instantiate the pipeline.
-     */
-    constructor(options) {
-        super(options);
+  /** @type {AudioClassificationPipelineCallback} */
+  async _call(audio, { top_k = 5 } = {}) {
+    const sampling_rate = this.processor.feature_extractor.config.sampling_rate;
+    const preparedAudios = await prepareAudios(audio, sampling_rate);
+
+    // @ts-expect-error TS2339
+    const id2label = this.model.config.id2label;
+
+    const toReturn = [];
+    for (const aud of preparedAudios) {
+      const inputs = await this.processor(aud);
+      const output = await this.model(inputs);
+      const logits = output.logits[0];
+
+      const scores = await topk(
+        new Tensor("float32", softmax(logits.data), logits.dims),
+        top_k,
+      );
+
+      const values = scores[0].tolist();
+      const indices = scores[1].tolist();
+
+      const vals = indices.map((x, i) => ({
+        label: /** @type {string} */ (id2label ? id2label[x] : `LABEL_${x}`),
+        score: /** @type {number} */ (values[i]),
+      }));
+
+      toReturn.push(vals);
     }
-
-    /** @type {AudioClassificationPipelineCallback} */
-    async _call(audio, {
-        top_k = 5
-    } = {}) {
-
-        const sampling_rate = this.processor.feature_extractor.config.sampling_rate;
-        const preparedAudios = await prepareAudios(audio, sampling_rate);
-
-        // @ts-expect-error TS2339
-        const id2label = this.model.config.id2label;
-
-        const toReturn = [];
-        for (const aud of preparedAudios) {
-            const inputs = await this.processor(aud);
-            const output = await this.model(inputs);
-            const logits = output.logits[0];
-
-            const scores = await topk(new Tensor(
-                'float32',
-                softmax(logits.data),
-                logits.dims,
-            ), top_k);
-
-            const values = scores[0].tolist();
-            const indices = scores[1].tolist();
-
-            const vals = indices.map((x, i) => ({
-                label: /** @type {string} */ (id2label ? id2label[x] : `LABEL_${x}`),
-                score: /** @type {number} */ (values[i]),
-            }));
-
-            toReturn.push(vals);
-        };
-        return Array.isArray(audio) ? toReturn : toReturn[0];
-    }
+    return Array.isArray(audio) ? toReturn : toReturn[0];
+  }
 }
 
 /**
@@ -1574,57 +1610,63 @@ export class AudioClassificationPipeline extends (/** @type {new (options: Audio
  * // ]
  * ```
  */
-export class ZeroShotAudioClassificationPipeline extends (/** @type {new (options: TextAudioPipelineConstructorArgs) => ZeroShotAudioClassificationPipelineType} */ (Pipeline)) {
+export class ZeroShotAudioClassificationPipeline
+  extends /** @type {new (options: TextAudioPipelineConstructorArgs) => ZeroShotAudioClassificationPipelineType} */ (
+    Pipeline
+  )
+{
+  /**
+   * Create a new ZeroShotAudioClassificationPipeline.
+   * @param {TextAudioPipelineConstructorArgs} options An object used to instantiate the pipeline.
+   */
+  constructor(options) {
+    super(options);
+  }
 
-    /**
-     * Create a new ZeroShotAudioClassificationPipeline.
-     * @param {TextAudioPipelineConstructorArgs} options An object used to instantiate the pipeline.
-     */
-    constructor(options) {
-        super(options);
+  /** @type {ZeroShotAudioClassificationPipelineCallback} */
+  async _call(
+    audio,
+    candidate_labels,
+    { hypothesis_template = "This is a sound of {}." } = {},
+  ) {
+    const single = !Array.isArray(audio);
+    if (single) {
+      audio = [/** @type {AudioInput} */ (audio)];
     }
 
-    /** @type {ZeroShotAudioClassificationPipelineCallback} */
-    async _call(audio, candidate_labels, {
-        hypothesis_template = "This is a sound of {}."
-    } = {}) {
+    // Insert label into hypothesis template
+    const texts = candidate_labels.map((x) =>
+      hypothesis_template.replace("{}", x),
+    );
 
-        const single = !Array.isArray(audio);
-        if (single) {
-            audio = [/** @type {AudioInput} */ (audio)];
-        }
+    // Run tokenization
+    const text_inputs = this.tokenizer(texts, {
+      padding: true,
+      truncation: true,
+    });
 
-        // Insert label into hypothesis template
-        const texts = candidate_labels.map(
-            x => hypothesis_template.replace('{}', x)
-        );
+    const sampling_rate = this.processor.feature_extractor.config.sampling_rate;
+    const preparedAudios = await prepareAudios(audio, sampling_rate);
 
-        // Run tokenization
-        const text_inputs = this.tokenizer(texts, {
-            padding: true,
-            truncation: true,
-        });
+    const toReturn = [];
+    for (const aud of preparedAudios) {
+      const audio_inputs = await this.processor(aud);
 
-        const sampling_rate = this.processor.feature_extractor.config.sampling_rate;
-        const preparedAudios = await prepareAudios(audio, sampling_rate);
+      // Run model with both text and audio inputs
+      const output = await this.model({ ...text_inputs, ...audio_inputs });
 
-        const toReturn = [];
-        for (const aud of preparedAudios) {
-            const audio_inputs = await this.processor(aud);
+      // Compute softmax per audio
+      const probs = softmax(output.logits_per_audio.data);
 
-            // Run model with both text and audio inputs
-            const output = await this.model({ ...text_inputs, ...audio_inputs });
-
-            // Compute softmax per audio
-            const probs = softmax(output.logits_per_audio.data);
-
-            toReturn.push([...probs].map((x, i) => ({
-                score: x,
-                label: candidate_labels[i]
-            })));
-        }
-        return single ? toReturn[0] : toReturn;
+      toReturn.push(
+        [...probs].map((x, i) => ({
+          score: x,
+          label: candidate_labels[i],
+        })),
+      );
     }
+    return single ? toReturn[0] : toReturn;
+  }
 }
 
 /**
@@ -1729,215 +1771,238 @@ export class ZeroShotAudioClassificationPipeline extends (/** @type {new (option
  * // { text: " So in college, I was a government major, which means [...] So I'd start off light and I'd bump it up" }
  * ```
  */
-export class AutomaticSpeechRecognitionPipeline extends (/** @type {new (options: TextAudioPipelineConstructorArgs) => AutomaticSpeechRecognitionPipelineType} */ (Pipeline)) {
+export class AutomaticSpeechRecognitionPipeline
+  extends /** @type {new (options: TextAudioPipelineConstructorArgs) => AutomaticSpeechRecognitionPipelineType} */ (
+    Pipeline
+  )
+{
+  /**
+   * Create a new AutomaticSpeechRecognitionPipeline.
+   * @param {TextAudioPipelineConstructorArgs} options An object used to instantiate the pipeline.
+   */
+  constructor(options) {
+    super(options);
+  }
 
-    /**
-     * Create a new AutomaticSpeechRecognitionPipeline.
-     * @param {TextAudioPipelineConstructorArgs} options An object used to instantiate the pipeline.
-     */
-    constructor(options) {
-        super(options);
+  /** @type {AutomaticSpeechRecognitionPipelineCallback} */
+  async _call(audio, kwargs = {}) {
+    switch (this.model.config.model_type) {
+      case "whisper":
+      case "lite-whisper":
+        return this._call_whisper(audio, kwargs);
+      case "wav2vec2":
+      case "wav2vec2-bert":
+      case "unispeech":
+      case "unispeech-sat":
+      case "hubert":
+      case "parakeet_ctc":
+        return this._call_wav2vec2(audio, kwargs);
+      case "moonshine":
+        return this._call_moonshine(audio, kwargs);
+      default:
+        throw new Error(
+          `AutomaticSpeechRecognitionPipeline does not support model type '${this.model.config.model_type}'.`,
+        );
+    }
+  }
+
+  /**
+   * @type {AutomaticSpeechRecognitionPipelineCallback}
+   * @private
+   */
+  async _call_wav2vec2(audio, kwargs) {
+    // TODO use kwargs
+
+    if (kwargs.language) {
+      console.warn(
+        '`language` parameter is not yet supported for `wav2vec2` models, defaulting to "English".',
+      );
+    }
+    if (kwargs.task) {
+      console.warn(
+        '`task` parameter is not yet supported for `wav2vec2` models, defaulting to "transcribe".',
+      );
     }
 
-    /** @type {AutomaticSpeechRecognitionPipelineCallback} */
-    async _call(audio, kwargs = {}) {
-        switch (this.model.config.model_type) {
-            case 'whisper':
-            case 'lite-whisper':
-                return this._call_whisper(audio, kwargs)
-            case 'wav2vec2':
-            case 'wav2vec2-bert':
-            case 'unispeech':
-            case 'unispeech-sat':
-            case 'hubert':
-            case 'parakeet_ctc':
-                return this._call_wav2vec2(audio, kwargs)
-            case 'moonshine':
-                return this._call_moonshine(audio, kwargs)
-            default:
-                throw new Error(`AutomaticSpeechRecognitionPipeline does not support model type '${this.model.config.model_type}'.`)
-        }
+    const single = !Array.isArray(audio);
+    if (single) {
+      audio = [/** @type {AudioInput} */ (audio)];
     }
 
-    /**
-     * @type {AutomaticSpeechRecognitionPipelineCallback}
-     * @private
-     */
-    async _call_wav2vec2(audio, kwargs) {
-        // TODO use kwargs
+    const sampling_rate = this.processor.feature_extractor.config.sampling_rate;
+    const preparedAudios = await prepareAudios(audio, sampling_rate);
 
-        if (kwargs.language) {
-            console.warn('`language` parameter is not yet supported for `wav2vec2` models, defaulting to "English".');
-        }
-        if (kwargs.task) {
-            console.warn('`task` parameter is not yet supported for `wav2vec2` models, defaulting to "transcribe".');
-        }
+    const toReturn = [];
+    for (const aud of preparedAudios) {
+      const inputs = await this.processor(aud);
+      const output = await this.model(inputs);
+      const logits = output.logits[0];
 
-        const single = !Array.isArray(audio);
-        if (single) {
-            audio = [/** @type {AudioInput} */ (audio)];
-        }
+      const predicted_ids = [];
+      for (const item of logits) {
+        predicted_ids.push(max(item.data)[1]);
+      }
+      const predicted_sentences = this.tokenizer
+        .decode(predicted_ids, { skip_special_tokens: true })
+        .trim();
+      toReturn.push({ text: predicted_sentences });
+    }
+    return single ? toReturn[0] : toReturn;
+  }
 
-        const sampling_rate = this.processor.feature_extractor.config.sampling_rate;
-        const preparedAudios = await prepareAudios(audio, sampling_rate);
+  /**
+   * @type {AutomaticSpeechRecognitionPipelineCallback}
+   * @private
+   */
+  async _call_whisper(audio, kwargs) {
+    const return_timestamps = kwargs.return_timestamps ?? false;
+    const chunk_length_s = kwargs.chunk_length_s ?? 0;
+    const force_full_sequences = kwargs.force_full_sequences ?? false;
+    let stride_length_s = kwargs.stride_length_s ?? null;
 
-        const toReturn = [];
-        for (const aud of preparedAudios) {
-            const inputs = await this.processor(aud);
-            const output = await this.model(inputs);
-            const logits = output.logits[0];
+    const generation_config = { ...kwargs };
 
-            const predicted_ids = [];
-            for (const item of logits) {
-                predicted_ids.push(max(item.data)[1])
-            }
-            const predicted_sentences = this.tokenizer.decode(predicted_ids, { skip_special_tokens: true }).trim();
-            toReturn.push({ text: predicted_sentences })
-        }
-        return single ? toReturn[0] : toReturn;
+    if (return_timestamps === "word") {
+      generation_config["return_token_timestamps"] = true;
+      generation_config["return_timestamps"] = false; // Do not predict timestamp tokens
     }
 
-    /**
-     * @type {AutomaticSpeechRecognitionPipelineCallback}
-     * @private
-     */
-    async _call_whisper(audio, kwargs) {
-        const return_timestamps = kwargs.return_timestamps ?? false;
-        const chunk_length_s = kwargs.chunk_length_s ?? 0;
-        const force_full_sequences = kwargs.force_full_sequences ?? false;
-        let stride_length_s = kwargs.stride_length_s ?? null;
-
-        const generation_config = { ...kwargs }
-
-        if (return_timestamps === 'word') {
-            generation_config['return_token_timestamps'] = true;
-            generation_config['return_timestamps'] = false; // Do not predict timestamp tokens
-        }
-
-        const single = !Array.isArray(audio);
-        if (single) {
-            audio = [/** @type {AudioInput} */ (audio)];
-        }
-
-        // @ts-expect-error TS2339
-        const time_precision = this.processor.feature_extractor.config.chunk_length / this.model.config.max_source_positions;
-        const hop_length = this.processor.feature_extractor.config.hop_length;
-
-        const sampling_rate = this.processor.feature_extractor.config.sampling_rate;
-        const preparedAudios = await prepareAudios(audio, sampling_rate);
-
-        const toReturn = [];
-        for (const aud of preparedAudios) {
-            /** @type {{stride: number[], input_features: Tensor, is_last: boolean, tokens?: bigint[], token_timestamps?: number[]}[]} */
-            let chunks = [];
-            if (chunk_length_s > 0) {
-                if (stride_length_s === null) {
-                    stride_length_s = chunk_length_s / 6;
-                } else if (chunk_length_s <= stride_length_s) {
-                    throw Error("`chunk_length_s` must be larger than `stride_length_s`.")
-                }
-
-                // TODO support different stride_length_s (for left and right)
-
-                const window = sampling_rate * chunk_length_s;
-                const stride = sampling_rate * stride_length_s;
-                const jump = window - 2 * stride;
-                let offset = 0;
-
-                // Create subarrays of audio with overlaps
-                while (true) {
-                    const offset_end = offset + window;
-                    const subarr = aud.subarray(offset, offset_end);
-                    const feature = await this.processor(subarr);
-
-                    const is_first = offset === 0;
-                    const is_last = offset_end >= aud.length;
-                    chunks.push({
-                        stride: [
-                            subarr.length,
-                            is_first ? 0 : stride,
-                            is_last ? 0 : stride
-                        ],
-                        input_features: feature.input_features,
-                        is_last,
-                    })
-                    if (is_last) break;
-                    offset += jump;
-                }
-
-            } else {
-                chunks = [{
-                    stride: [aud.length, 0, 0],
-                    input_features: (await this.processor(aud)).input_features,
-                    is_last: true
-                }]
-            }
-
-            // Generate for each set of input features
-            for (const chunk of chunks) {
-                generation_config.num_frames = Math.floor(chunk.stride[0] / hop_length);
-
-                // NOTE: doing sequentially for now
-                const data = await this.model.generate({
-                    inputs: chunk.input_features,
-                    ...generation_config
-                });
-
-                // TODO: Right now we only get top beam
-                if (return_timestamps === 'word') {
-                    // @ts-expect-error TS2339
-                    chunk.tokens = data.sequences.tolist()[0];
-                    // @ts-expect-error TS2339
-                    chunk.token_timestamps = data.token_timestamps.tolist()[0].map(
-                        (/** @type {number} */ x) => round(x, 2)
-                    );
-
-                } else {
-                    chunk.tokens = (/** @type {Tensor} */(data))[0].tolist();
-                }
-
-                // convert stride to seconds
-                chunk.stride = chunk.stride.map(x => x / sampling_rate);
-            }
-
-            // Merge text chunks
-            // @ts-ignore
-            const [full_text, optional] = this.tokenizer._decode_asr(chunks, {
-                time_precision, return_timestamps, force_full_sequences
-            });
-
-            toReturn.push({ text: full_text, ...optional })
-        }
-        return single ? toReturn[0] : toReturn;
+    const single = !Array.isArray(audio);
+    if (single) {
+      audio = [/** @type {AudioInput} */ (audio)];
     }
 
-    /**
-     * @type {AutomaticSpeechRecognitionPipelineCallback}
-     * @private
-     */
-    async _call_moonshine(audio, kwargs) {
-        const single = !Array.isArray(audio);
-        if (single) {
-            audio = [/** @type {AudioInput} */ (audio)];
-        }
-        const sampling_rate = this.processor.feature_extractor.config.sampling_rate;
-        const preparedAudios = await prepareAudios(audio, sampling_rate);
-        const toReturn = [];
-        for (const aud of preparedAudios) {
-            const inputs = await this.processor(aud);
+    // @ts-expect-error TS2339
+    const time_precision =
+      this.processor.feature_extractor.config.chunk_length /
+      this.model.config.max_source_positions;
+    const hop_length = this.processor.feature_extractor.config.hop_length;
 
-            // According to the [paper](https://huggingface.co/papers/2410.15608):
-            // "We use greedy decoding, with a heuristic limit of 6 output tokens
-            // per second of audio to avoid repeated output sequences."
-            const max_new_tokens = Math.floor(aud.length / sampling_rate) * 6;
-            const outputs = await this.model.generate({ max_new_tokens, ...kwargs, ...inputs });
+    const sampling_rate = this.processor.feature_extractor.config.sampling_rate;
+    const preparedAudios = await prepareAudios(audio, sampling_rate);
 
-            const text = this.processor.batch_decode(/** @type {Tensor} */(outputs), { skip_special_tokens: true })[0];
-            toReturn.push({ text });
+    const toReturn = [];
+    for (const aud of preparedAudios) {
+      /** @type {{stride: number[], input_features: Tensor, is_last: boolean, tokens?: bigint[], token_timestamps?: number[]}[]} */
+      let chunks = [];
+      if (chunk_length_s > 0) {
+        if (stride_length_s === null) {
+          stride_length_s = chunk_length_s / 6;
+        } else if (chunk_length_s <= stride_length_s) {
+          throw Error(
+            "`chunk_length_s` must be larger than `stride_length_s`.",
+          );
         }
-        return single ? toReturn[0] : toReturn;
+
+        // TODO support different stride_length_s (for left and right)
+
+        const window = sampling_rate * chunk_length_s;
+        const stride = sampling_rate * stride_length_s;
+        const jump = window - 2 * stride;
+        let offset = 0;
+
+        // Create subarrays of audio with overlaps
+        while (true) {
+          const offset_end = offset + window;
+          const subarr = aud.subarray(offset, offset_end);
+          const feature = await this.processor(subarr);
+
+          const is_first = offset === 0;
+          const is_last = offset_end >= aud.length;
+          chunks.push({
+            stride: [
+              subarr.length,
+              is_first ? 0 : stride,
+              is_last ? 0 : stride,
+            ],
+            input_features: feature.input_features,
+            is_last,
+          });
+          if (is_last) break;
+          offset += jump;
+        }
+      } else {
+        chunks = [
+          {
+            stride: [aud.length, 0, 0],
+            input_features: (await this.processor(aud)).input_features,
+            is_last: true,
+          },
+        ];
+      }
+
+      // Generate for each set of input features
+      for (const chunk of chunks) {
+        generation_config.num_frames = Math.floor(chunk.stride[0] / hop_length);
+
+        // NOTE: doing sequentially for now
+        const data = await this.model.generate({
+          inputs: chunk.input_features,
+          ...generation_config,
+        });
+
+        // TODO: Right now we only get top beam
+        if (return_timestamps === "word") {
+          // @ts-expect-error TS2339
+          chunk.tokens = data.sequences.tolist()[0];
+          // @ts-expect-error TS2339
+          chunk.token_timestamps = data.token_timestamps
+            .tolist()[0]
+            .map((/** @type {number} */ x) => round(x, 2));
+        } else {
+          chunk.tokens = /** @type {Tensor} */ (data)[0].tolist();
+        }
+
+        // convert stride to seconds
+        chunk.stride = chunk.stride.map((x) => x / sampling_rate);
+      }
+
+      // Merge text chunks
+      // @ts-ignore
+      const [full_text, optional] = this.tokenizer._decode_asr(chunks, {
+        time_precision,
+        return_timestamps,
+        force_full_sequences,
+      });
+
+      toReturn.push({ text: full_text, ...optional });
     }
+    return single ? toReturn[0] : toReturn;
+  }
 
+  /**
+   * @type {AutomaticSpeechRecognitionPipelineCallback}
+   * @private
+   */
+  async _call_moonshine(audio, kwargs) {
+    const single = !Array.isArray(audio);
+    if (single) {
+      audio = [/** @type {AudioInput} */ (audio)];
+    }
+    const sampling_rate = this.processor.feature_extractor.config.sampling_rate;
+    const preparedAudios = await prepareAudios(audio, sampling_rate);
+    const toReturn = [];
+    for (const aud of preparedAudios) {
+      const inputs = await this.processor(aud);
+
+      // According to the [paper](https://huggingface.co/papers/2410.15608):
+      // "We use greedy decoding, with a heuristic limit of 6 output tokens
+      // per second of audio to avoid repeated output sequences."
+      const max_new_tokens = Math.floor(aud.length / sampling_rate) * 6;
+      const outputs = await this.model.generate({
+        max_new_tokens,
+        ...kwargs,
+        ...inputs,
+      });
+
+      const text = this.processor.batch_decode(
+        /** @type {Tensor} */ (outputs),
+        { skip_special_tokens: true },
+      )[0];
+      toReturn.push({ text });
+    }
+    return single ? toReturn[0] : toReturn;
+  }
 }
 
 /**
@@ -1972,36 +2037,43 @@ export class AutomaticSpeechRecognitionPipeline extends (/** @type {new (options
  * // [{ generated_text: 'Mr. Brown commented icily.' }]
  * ```
  */
-export class ImageToTextPipeline extends (/** @type {new (options: TextImagePipelineConstructorArgs) => ImageToTextPipelineType} */ (Pipeline)) {
+export class ImageToTextPipeline
+  extends /** @type {new (options: TextImagePipelineConstructorArgs) => ImageToTextPipelineType} */ (
+    Pipeline
+  )
+{
+  /**
+   * Create a new ImageToTextPipeline.
+   * @param {TextImagePipelineConstructorArgs} options An object used to instantiate the pipeline.
+   */
+  constructor(options) {
+    super(options);
+  }
 
-    /**
-     * Create a new ImageToTextPipeline.
-     * @param {TextImagePipelineConstructorArgs} options An object used to instantiate the pipeline.
-     */
-    constructor(options) {
-        super(options);
+  /** @type {ImageToTextPipelineCallback} */
+  async _call(images, generate_kwargs = {}) {
+    const isBatched = Array.isArray(images);
+    const preparedImages = await prepareImages(images);
+
+    const { pixel_values } = await this.processor(preparedImages);
+
+    const toReturn = [];
+    for (const batch of pixel_values) {
+      batch.dims = [1, ...batch.dims];
+      const output = await this.model.generate({
+        inputs: batch,
+        ...generate_kwargs,
+      });
+      const decoded = this.tokenizer
+        .batch_decode(/** @type {Tensor} */ (output), {
+          skip_special_tokens: true,
+        })
+        .map((x) => ({ generated_text: x.trim() }));
+      toReturn.push(decoded);
     }
 
-    /** @type {ImageToTextPipelineCallback} */
-    async _call(images, generate_kwargs = {}) {
-
-        const isBatched = Array.isArray(images);
-        const preparedImages = await prepareImages(images);
-
-        const { pixel_values } = await this.processor(preparedImages);
-
-        const toReturn = [];
-        for (const batch of pixel_values) {
-            batch.dims = [1, ...batch.dims]
-            const output = await this.model.generate({ inputs: batch, ...generate_kwargs });
-            const decoded = this.tokenizer.batch_decode(/** @type {Tensor} */(output), {
-                skip_special_tokens: true,
-            }).map(x => ({ generated_text: x.trim() }))
-            toReturn.push(decoded);
-        }
-
-        return isBatched ? toReturn : toReturn[0];
-    }
+    return isBatched ? toReturn : toReturn[0];
+  }
 }
 
 /**
@@ -2061,51 +2133,49 @@ export class ImageToTextPipeline extends (/** @type {new (options: TextImagePipe
  * // ]
  * ```
  */
-export class ImageClassificationPipeline extends (/** @type {new (options: ImagePipelineConstructorArgs) => ImageClassificationPipelineType} */ (Pipeline)) {
+export class ImageClassificationPipeline
+  extends /** @type {new (options: ImagePipelineConstructorArgs) => ImageClassificationPipelineType} */ (
+    Pipeline
+  )
+{
+  /**
+   * Create a new ImageClassificationPipeline.
+   * @param {ImagePipelineConstructorArgs} options An object used to instantiate the pipeline.
+   */
+  constructor(options) {
+    super(options);
+  }
 
-    /**
-     * Create a new ImageClassificationPipeline.
-     * @param {ImagePipelineConstructorArgs} options An object used to instantiate the pipeline.
-     */
-    constructor(options) {
-        super(options);
+  /** @type {ImageClassificationPipelineCallback} */
+  async _call(images, { top_k = 5 } = {}) {
+    const preparedImages = await prepareImages(images);
+
+    const { pixel_values } = await this.processor(preparedImages);
+    const output = await this.model({ pixel_values });
+
+    // @ts-expect-error TS2339
+    const id2label = this.model.config.id2label;
+
+    /** @type {ImageClassificationOutput[]} */
+    const toReturn = [];
+    for (const batch of output.logits) {
+      const scores = await topk(
+        new Tensor("float32", softmax(batch.data), batch.dims),
+        top_k,
+      );
+
+      const values = scores[0].tolist();
+      const indices = scores[1].tolist();
+
+      const vals = indices.map((x, i) => ({
+        label: /** @type {string} */ (id2label ? id2label[x] : `LABEL_${x}`),
+        score: /** @type {number} */ (values[i]),
+      }));
+      toReturn.push(vals);
     }
 
-    /** @type {ImageClassificationPipelineCallback} */
-    async _call(images, {
-        top_k = 5
-    } = {}) {
-
-        const preparedImages = await prepareImages(images);
-
-        const { pixel_values } = await this.processor(preparedImages);
-        const output = await this.model({ pixel_values });
-
-        // @ts-expect-error TS2339
-        const id2label = this.model.config.id2label;
-
-        /** @type {ImageClassificationOutput[]} */
-        const toReturn = [];
-        for (const batch of output.logits) {
-            const scores = await topk(new Tensor(
-                'float32',
-                softmax(batch.data),
-                batch.dims,
-            ), top_k);
-
-            const values = scores[0].tolist();
-            const indices = scores[1].tolist();
-
-            const vals = indices.map((x, i) => ({
-                label: /** @type {string} */ (id2label ? id2label[x] : `LABEL_${x}`),
-                score: /** @type {number} */ (values[i]),
-            }));
-            toReturn.push(vals);
-        }
-
-        return Array.isArray(images) ? toReturn : toReturn[0];
-    }
-
+    return Array.isArray(images) ? toReturn : toReturn[0];
+  }
 }
 
 /**
@@ -2146,154 +2216,180 @@ export class ImageClassificationPipeline extends (/** @type {new (options: Image
  * // ]
  * ```
  */
-export class ImageSegmentationPipeline extends (/** @type {new (options: ImagePipelineConstructorArgs) => ImageSegmentationPipelineType} */ (Pipeline)) {
-    /**
-     * Create a new ImageSegmentationPipeline.
-     * @param {ImagePipelineConstructorArgs} options An object used to instantiate the pipeline.
-     */
-    constructor(options) {
-        super(options);
+export class ImageSegmentationPipeline
+  extends /** @type {new (options: ImagePipelineConstructorArgs) => ImageSegmentationPipelineType} */ (
+    Pipeline
+  )
+{
+  /**
+   * Create a new ImageSegmentationPipeline.
+   * @param {ImagePipelineConstructorArgs} options An object used to instantiate the pipeline.
+   */
+  constructor(options) {
+    super(options);
 
-        this.subtasks_mapping = {
-            // Mapping of subtasks to their corresponding post-processing function names.
-            panoptic: 'post_process_panoptic_segmentation',
-            instance: 'post_process_instance_segmentation',
-            semantic: 'post_process_semantic_segmentation'
-        }
+    this.subtasks_mapping = {
+      // Mapping of subtasks to their corresponding post-processing function names.
+      panoptic: "post_process_panoptic_segmentation",
+      instance: "post_process_instance_segmentation",
+      semantic: "post_process_semantic_segmentation",
+    };
+  }
+
+  /** @type {ImageSegmentationPipelineCallback} */
+  async _call(
+    images,
+    {
+      threshold = 0.5,
+      mask_threshold = 0.5,
+      overlap_mask_area_threshold = 0.8,
+      label_ids_to_fuse = null,
+      target_sizes = null,
+      subtask = null,
+    } = {},
+  ) {
+    const isBatched = Array.isArray(images);
+
+    if (isBatched && images.length !== 1) {
+      throw Error(
+        "Image segmentation pipeline currently only supports a batch size of 1.",
+      );
     }
 
-    /** @type {ImageSegmentationPipelineCallback} */
-    async _call(images, {
-        threshold = 0.5,
-        mask_threshold = 0.5,
-        overlap_mask_area_threshold = 0.8,
-        label_ids_to_fuse = null,
-        target_sizes = null,
-        subtask = null,
-    } = {}) {
-        const isBatched = Array.isArray(images);
+    const preparedImages = await prepareImages(images);
+    const imageSizes = preparedImages.map((x) => [x.height, x.width]);
 
-        if (isBatched && images.length !== 1) {
-            throw Error("Image segmentation pipeline currently only supports a batch size of 1.");
-        }
+    const inputs = await this.processor(preparedImages);
 
-        const preparedImages = await prepareImages(images);
-        const imageSizes = preparedImages.map(x => [x.height, x.width]);
+    const { inputNames, outputNames } = this.model.sessions["model"];
+    if (!inputNames.includes("pixel_values")) {
+      if (inputNames.length !== 1) {
+        throw Error(
+          `Expected a single input name, but got ${inputNames.length} inputs: ${inputNames}.`,
+        );
+      }
 
-        const inputs = await this.processor(preparedImages);
-
-        const { inputNames, outputNames } = this.model.sessions['model'];
-        if (!inputNames.includes('pixel_values')) {
-            if (inputNames.length !== 1) {
-                throw Error(`Expected a single input name, but got ${inputNames.length} inputs: ${inputNames}.`);
-            }
-
-            const newName = inputNames[0];
-            if (newName in inputs) {
-                throw Error(`Input name ${newName} already exists in the inputs.`);
-            }
-            // To ensure compatibility with certain background-removal models,
-            // we may need to perform a mapping of input to output names
-            inputs[newName] = inputs.pixel_values;
-        }
-
-        const output = await this.model(inputs);
-
-        let fn = null;
-        if (subtask !== null) {
-            fn = this.subtasks_mapping[subtask];
-        } else if (this.processor.image_processor) {
-            for (const [task, func] of Object.entries(this.subtasks_mapping)) {
-                if (func in this.processor.image_processor) {
-                    fn = this.processor.image_processor[func].bind(this.processor.image_processor);
-                    subtask = task;
-                    break;
-                }
-            }
-        }
-
-        // @ts-expect-error TS2339
-        const id2label = this.model.config.id2label;
-
-        /** @type {ImageSegmentationPipelineOutput[]} */
-        const annotation = [];
-        if (!subtask) {
-            // We define an epsilon to safeguard against numerical/precision issues when detecting
-            // the normalization mode of the output (i.e., sigmoid already applied, or not).
-            // See https://github.com/microsoft/onnxruntime/issues/23943 for more information.
-            const epsilon = 1e-5;
-
-            // Perform standard image segmentation
-            const result = output[outputNames[0]];
-            for (let i = 0; i < imageSizes.length; ++i) {
-                const size = imageSizes[i];
-                const item = result[i];
-                if (item.data.some(x => x < -epsilon || x > 1 + epsilon)) {
-                    item.sigmoid_();
-                }
-                const mask = await RawImage.fromTensor(item.mul_(255).to('uint8')).resize(size[1], size[0]);
-                annotation.push({
-                    label: null,
-                    score: null,
-                    mask
-                });
-            }
-        } else if (subtask === 'panoptic' || subtask === 'instance') {
-            const processed = fn(
-                output,
-                threshold,
-                mask_threshold,
-                overlap_mask_area_threshold,
-                label_ids_to_fuse,
-                target_sizes ?? imageSizes, // TODO FIX?
-            )[0];
-
-            const segmentation = processed.segmentation;
-
-            for (const segment of processed.segments_info) {
-                const maskData = new Uint8ClampedArray(segmentation.data.length);
-                for (let i = 0; i < segmentation.data.length; ++i) {
-                    if (segmentation.data[i] === segment.id) {
-                        maskData[i] = 255;
-                    }
-                }
-
-                const mask = new RawImage(maskData, segmentation.dims[1], segmentation.dims[0], 1)
-
-                annotation.push({
-                    score: segment.score,
-                    label: id2label[segment.label_id],
-                    mask: mask
-                })
-            }
-
-        } else if (subtask === 'semantic') {
-            const { segmentation, labels } = fn(output, target_sizes ?? imageSizes)[0];
-
-            for (const label of labels) {
-                const maskData = new Uint8ClampedArray(segmentation.data.length);
-                for (let i = 0; i < segmentation.data.length; ++i) {
-                    if (segmentation.data[i] === label) {
-                        maskData[i] = 255;
-                    }
-                }
-
-                const mask = new RawImage(maskData, segmentation.dims[1], segmentation.dims[0], 1);
-
-                annotation.push({
-                    score: null,
-                    label: id2label[label],
-                    mask: mask
-                });
-            }
-        } else {
-            throw Error(`Subtask ${subtask} not supported.`);
-        }
-
-        return annotation;
+      const newName = inputNames[0];
+      if (newName in inputs) {
+        throw Error(`Input name ${newName} already exists in the inputs.`);
+      }
+      // To ensure compatibility with certain background-removal models,
+      // we may need to perform a mapping of input to output names
+      inputs[newName] = inputs.pixel_values;
     }
+
+    const output = await this.model(inputs);
+
+    let fn = null;
+    if (subtask !== null) {
+      fn = this.subtasks_mapping[subtask];
+    } else if (this.processor.image_processor) {
+      for (const [task, func] of Object.entries(this.subtasks_mapping)) {
+        if (func in this.processor.image_processor) {
+          fn = this.processor.image_processor[func].bind(
+            this.processor.image_processor,
+          );
+          subtask = task;
+          break;
+        }
+      }
+    }
+
+    // @ts-expect-error TS2339
+    const id2label = this.model.config.id2label;
+
+    /** @type {ImageSegmentationPipelineOutput[]} */
+    const annotation = [];
+    if (!subtask) {
+      // We define an epsilon to safeguard against numerical/precision issues when detecting
+      // the normalization mode of the output (i.e., sigmoid already applied, or not).
+      // See https://github.com/microsoft/onnxruntime/issues/23943 for more information.
+      const epsilon = 1e-5;
+
+      // Perform standard image segmentation
+      const result = output[outputNames[0]];
+      for (let i = 0; i < imageSizes.length; ++i) {
+        const size = imageSizes[i];
+        const item = result[i];
+        if (item.data.some((x) => x < -epsilon || x > 1 + epsilon)) {
+          item.sigmoid_();
+        }
+        const mask = await RawImage.fromTensor(
+          item.mul_(255).to("uint8"),
+        ).resize(size[1], size[0]);
+        annotation.push({
+          label: null,
+          score: null,
+          mask,
+        });
+      }
+    } else if (subtask === "panoptic" || subtask === "instance") {
+      const processed = fn(
+        output,
+        threshold,
+        mask_threshold,
+        overlap_mask_area_threshold,
+        label_ids_to_fuse,
+        target_sizes ?? imageSizes, // TODO FIX?
+      )[0];
+
+      const segmentation = processed.segmentation;
+
+      for (const segment of processed.segments_info) {
+        const maskData = new Uint8ClampedArray(segmentation.data.length);
+        for (let i = 0; i < segmentation.data.length; ++i) {
+          if (segmentation.data[i] === segment.id) {
+            maskData[i] = 255;
+          }
+        }
+
+        const mask = new RawImage(
+          maskData,
+          segmentation.dims[1],
+          segmentation.dims[0],
+          1,
+        );
+
+        annotation.push({
+          score: segment.score,
+          label: id2label[segment.label_id],
+          mask: mask,
+        });
+      }
+    } else if (subtask === "semantic") {
+      const { segmentation, labels } = fn(
+        output,
+        target_sizes ?? imageSizes,
+      )[0];
+
+      for (const label of labels) {
+        const maskData = new Uint8ClampedArray(segmentation.data.length);
+        for (let i = 0; i < segmentation.data.length; ++i) {
+          if (segmentation.data[i] === label) {
+            maskData[i] = 255;
+          }
+        }
+
+        const mask = new RawImage(
+          maskData,
+          segmentation.dims[1],
+          segmentation.dims[0],
+          1,
+        );
+
+        annotation.push({
+          score: null,
+          label: id2label[label],
+          mask: mask,
+        });
+      }
+    } else {
+      throw Error(`Subtask ${subtask} not supported.`);
+    }
+
+    return annotation;
+  }
 }
-
 
 /**
  * @typedef {Object} BackgroundRemovalPipelineOptions Parameters specific to image segmentation pipelines.
@@ -2320,35 +2416,41 @@ export class ImageSegmentationPipeline extends (/** @type {new (options: ImagePi
  * // ]
  * ```
  */
-export class BackgroundRemovalPipeline extends (/** @type {new (options: ImagePipelineConstructorArgs) => BackgroundRemovalPipelineType} */ (/** @type {any} */(ImageSegmentationPipeline))) {
-    /**
-     * Create a new BackgroundRemovalPipeline.
-     * @param {ImagePipelineConstructorArgs} options An object used to instantiate the pipeline.
-     */
-    constructor(options) {
-        super(options);
+export class BackgroundRemovalPipeline
+  extends /** @type {new (options: ImagePipelineConstructorArgs) => BackgroundRemovalPipelineType} */ (
+    /** @type {any} */ (ImageSegmentationPipeline)
+  )
+{
+  /**
+   * Create a new BackgroundRemovalPipeline.
+   * @param {ImagePipelineConstructorArgs} options An object used to instantiate the pipeline.
+   */
+  constructor(options) {
+    super(options);
+  }
+
+  /** @type {BackgroundRemovalPipelineCallback} */
+  async _call(images, options = {}) {
+    const isBatched = Array.isArray(images);
+
+    if (isBatched && images.length !== 1) {
+      throw Error(
+        "Background removal pipeline currently only supports a batch size of 1.",
+      );
     }
 
-    /** @type {BackgroundRemovalPipelineCallback} */
-    async _call(images, options = {}) {
-        const isBatched = Array.isArray(images);
+    const preparedImages = await prepareImages(images);
 
-        if (isBatched && images.length !== 1) {
-            throw Error("Background removal pipeline currently only supports a batch size of 1.");
-        }
+    // @ts-expect-error TS2339
+    const masks = await super._call(images, options);
+    const result = preparedImages.map((img, i) => {
+      const cloned = img.clone();
+      cloned.putAlpha(masks[i].mask);
+      return cloned;
+    });
 
-        const preparedImages = await prepareImages(images);
-
-        // @ts-expect-error TS2339
-        const masks = await super._call(images, options);
-        const result = preparedImages.map((img, i) => {
-            const cloned = img.clone();
-            cloned.putAlpha(masks[i].mask);
-            return cloned;
-        });
-
-        return result;
-    }
+    return result;
+  }
 }
 
 /**
@@ -2386,63 +2488,67 @@ export class BackgroundRemovalPipeline extends (/** @type {new (options: ImagePi
  * // ]
  * ```
  */
-export class ZeroShotImageClassificationPipeline extends (/** @type {new (options: TextImagePipelineConstructorArgs) => ZeroShotImageClassificationPipelineType} */ (Pipeline)) {
-    /**
-     * Create a new ZeroShotImageClassificationPipeline.
-     * @param {TextImagePipelineConstructorArgs} options An object used to instantiate the pipeline.
-     */
-    constructor(options) {
-        super(options);
+export class ZeroShotImageClassificationPipeline
+  extends /** @type {new (options: TextImagePipelineConstructorArgs) => ZeroShotImageClassificationPipelineType} */ (
+    Pipeline
+  )
+{
+  /**
+   * Create a new ZeroShotImageClassificationPipeline.
+   * @param {TextImagePipelineConstructorArgs} options An object used to instantiate the pipeline.
+   */
+  constructor(options) {
+    super(options);
+  }
+
+  /** @type {ZeroShotImageClassificationPipelineCallback} */
+  async _call(
+    images,
+    candidate_labels,
+    { hypothesis_template = "This is a photo of {}" } = {},
+  ) {
+    const isBatched = Array.isArray(images);
+    const preparedImages = await prepareImages(images);
+
+    // Insert label into hypothesis template
+    const texts = candidate_labels.map((x) =>
+      hypothesis_template.replace("{}", x),
+    );
+
+    // Run tokenization
+    const text_inputs = this.tokenizer(texts, {
+      padding: this.model.config.model_type === "siglip" ? "max_length" : true,
+      truncation: true,
+    });
+
+    // Run processor
+    const { pixel_values } = await this.processor(preparedImages);
+
+    // Run model with both text and pixel inputs
+    const output = await this.model({ ...text_inputs, pixel_values });
+
+    const function_to_apply =
+      this.model.config.model_type === "siglip"
+        ? (batch) => batch.sigmoid().data
+        : (batch) => softmax(batch.data);
+
+    // Compare each image with each candidate label
+    const toReturn = [];
+    for (const batch of output.logits_per_image) {
+      // Compute softmax per image
+      const probs = function_to_apply(batch);
+
+      const result = [...probs].map((x, i) => ({
+        score: x,
+        label: candidate_labels[i],
+      }));
+      result.sort((a, b) => b.score - a.score); // sort by score in descending order
+      toReturn.push(result);
     }
 
-    /** @type {ZeroShotImageClassificationPipelineCallback} */
-    async _call(images, candidate_labels, {
-        hypothesis_template = "This is a photo of {}"
-    } = {}) {
-
-        const isBatched = Array.isArray(images);
-        const preparedImages = await prepareImages(images);
-
-        // Insert label into hypothesis template
-        const texts = candidate_labels.map(
-            x => hypothesis_template.replace('{}', x)
-        );
-
-        // Run tokenization
-        const text_inputs = this.tokenizer(texts, {
-            padding: this.model.config.model_type === 'siglip' ? 'max_length' : true,
-            truncation: true,
-        });
-
-        // Run processor
-        const { pixel_values } = await this.processor(preparedImages);
-
-        // Run model with both text and pixel inputs
-        const output = await this.model({ ...text_inputs, pixel_values });
-
-        const function_to_apply =
-            this.model.config.model_type === 'siglip'
-                ? batch => batch.sigmoid().data
-                : batch => softmax(batch.data);
-
-        // Compare each image with each candidate label
-        const toReturn = [];
-        for (const batch of output.logits_per_image) {
-            // Compute softmax per image
-            const probs = function_to_apply(batch);
-
-            const result = [...probs].map((x, i) => ({
-                score: x,
-                label: candidate_labels[i]
-            }));
-            result.sort((a, b) => b.score - a.score); // sort by score in descending order
-            toReturn.push(result);
-        }
-
-        return isBatched ? toReturn : toReturn[0];
-    }
+    return isBatched ? toReturn : toReturn[0];
+  }
 }
-
 
 /**
  * @typedef {Object} ObjectDetectionPipelineSingle
@@ -2485,55 +2591,62 @@ export class ZeroShotImageClassificationPipeline extends (/** @type {new (option
  * // }]
  * ```
  */
-export class ObjectDetectionPipeline extends (/** @type {new (options: ImagePipelineConstructorArgs) => ObjectDetectionPipelineType} */ (Pipeline)) {
+export class ObjectDetectionPipeline
+  extends /** @type {new (options: ImagePipelineConstructorArgs) => ObjectDetectionPipelineType} */ (
+    Pipeline
+  )
+{
+  /**
+   * Create a new ObjectDetectionPipeline.
+   * @param {ImagePipelineConstructorArgs} options An object used to instantiate the pipeline.
+   */
+  constructor(options) {
+    super(options);
+  }
 
-    /**
-     * Create a new ObjectDetectionPipeline.
-     * @param {ImagePipelineConstructorArgs} options An object used to instantiate the pipeline.
-     */
-    constructor(options) {
-        super(options);
+  /** @type {ObjectDetectionPipelineCallback} */
+  async _call(images, { threshold = 0.9, percentage = false } = {}) {
+    const isBatched = Array.isArray(images);
+
+    if (isBatched && images.length !== 1) {
+      throw Error(
+        "Object detection pipeline currently only supports a batch size of 1.",
+      );
     }
+    const preparedImages = await prepareImages(images);
 
-    /** @type {ObjectDetectionPipelineCallback} */
-    async _call(images, {
-        threshold = 0.9,
-        percentage = false,
-    } = {}) {
+    const imageSizes = percentage
+      ? null
+      : preparedImages.map((x) => [x.height, x.width]);
 
-        const isBatched = Array.isArray(images);
+    const { pixel_values, pixel_mask } = await this.processor(preparedImages);
+    const output = await this.model({ pixel_values, pixel_mask });
 
-        if (isBatched && images.length !== 1) {
-            throw Error("Object detection pipeline currently only supports a batch size of 1.");
-        }
-        const preparedImages = await prepareImages(images);
+    // @ts-ignore
+    const processed =
+      this.processor.image_processor.post_process_object_detection(
+        output,
+        threshold,
+        imageSizes,
+      );
 
-        const imageSizes = percentage ? null : preparedImages.map(x => [x.height, x.width]);
+    // Add labels
+    // @ts-expect-error TS2339
+    const id2label = this.model.config.id2label;
 
-        const { pixel_values, pixel_mask } = await this.processor(preparedImages);
-        const output = await this.model({ pixel_values, pixel_mask });
+    // Format output
+    /** @type {ObjectDetectionPipelineOutput[]} */
+    const result = processed.map((batch) =>
+      batch.boxes.map((box, i) => ({
+        score: batch.scores[i],
+        label: id2label[batch.classes[i]],
+        box: get_bounding_box(box, !percentage),
+      })),
+    );
 
-        // @ts-ignore
-        const processed = this.processor.image_processor.post_process_object_detection(output, threshold, imageSizes);
-
-        // Add labels
-        // @ts-expect-error TS2339
-        const id2label = this.model.config.id2label;
-
-        // Format output
-        /** @type {ObjectDetectionPipelineOutput[]} */
-        const result = processed.map(batch => (
-            batch.boxes.map((box, i) => ({
-                score: batch.scores[i],
-                label: id2label[batch.classes[i]],
-                box: get_bounding_box(box, !percentage),
-            }))
-        ))
-
-        return isBatched ? result : result[0];
-    }
+    return isBatched ? result : result[0];
+  }
 }
-
 
 /**
  * @typedef {Object} ZeroShotObjectDetectionOutput
@@ -2621,84 +2734,92 @@ export class ObjectDetectionPipeline extends (/** @type {new (options: ImagePipe
  * // ]
  * ```
  */
-export class ZeroShotObjectDetectionPipeline extends (/** @type {new (options: TextImagePipelineConstructorArgs) => ZeroShotObjectDetectionPipelineType} */ (Pipeline)) {
+export class ZeroShotObjectDetectionPipeline
+  extends /** @type {new (options: TextImagePipelineConstructorArgs) => ZeroShotObjectDetectionPipelineType} */ (
+    Pipeline
+  )
+{
+  /**
+   * Create a new ZeroShotObjectDetectionPipeline.
+   * @param {TextImagePipelineConstructorArgs} options An object used to instantiate the pipeline.
+   */
+  constructor(options) {
+    super(options);
+  }
 
-    /**
-     * Create a new ZeroShotObjectDetectionPipeline.
-     * @param {TextImagePipelineConstructorArgs} options An object used to instantiate the pipeline.
-     */
-    constructor(options) {
-        super(options);
+  /** @type {ZeroShotObjectDetectionPipelineCallback} */
+  async _call(
+    images,
+    candidate_labels,
+    { threshold = 0.1, top_k = null, percentage = false } = {},
+  ) {
+    const isBatched = Array.isArray(images);
+    const preparedImages = await prepareImages(images);
+
+    // Run tokenization
+    const text_inputs = this.tokenizer(candidate_labels, {
+      padding: true,
+      truncation: true,
+    });
+
+    // Run processor
+    const model_inputs = await this.processor(preparedImages);
+
+    // Since non-maximum suppression is performed for exporting, we need to
+    // process each image separately. For more information, see:
+    // https://github.com/huggingface/optimum/blob/e3b7efb1257c011db907ef40ab340e795cc5684c/optimum/exporters/onnx/model_configs.py#L1028-L1032
+    const toReturn = [];
+    for (let i = 0; i < preparedImages.length; ++i) {
+      const image = preparedImages[i];
+      const imageSize = percentage ? null : [[image.height, image.width]];
+      const pixel_values = model_inputs.pixel_values[i].unsqueeze_(0);
+
+      // Run model with both text and pixel inputs
+      const output = await this.model({ ...text_inputs, pixel_values });
+
+      let result;
+      if ("post_process_grounded_object_detection" in this.processor) {
+        // @ts-ignore
+        const processed = this.processor.post_process_grounded_object_detection(
+          output,
+          text_inputs.input_ids,
+          {
+            // TODO: support separate threshold values
+            box_threshold: threshold,
+            text_threshold: threshold,
+            target_sizes: imageSize,
+          },
+        )[0];
+        result = processed.boxes.map((box, i) => ({
+          score: processed.scores[i],
+          label: processed.labels[i],
+          box: get_bounding_box(box, !percentage),
+        }));
+      } else {
+        // @ts-ignore
+        const processed =
+          this.processor.image_processor.post_process_object_detection(
+            output,
+            threshold,
+            imageSize,
+            true,
+          )[0];
+        result = processed.boxes.map((box, i) => ({
+          score: processed.scores[i],
+          label: candidate_labels[processed.classes[i]],
+          box: get_bounding_box(box, !percentage),
+        }));
+      }
+      result.sort((a, b) => b.score - a.score);
+
+      if (top_k !== null) {
+        result = result.slice(0, top_k);
+      }
+      toReturn.push(result);
     }
 
-    /** @type {ZeroShotObjectDetectionPipelineCallback} */
-    async _call(images, candidate_labels, {
-        threshold = 0.1,
-        top_k = null,
-        percentage = false,
-    } = {}) {
-
-        const isBatched = Array.isArray(images);
-        const preparedImages = await prepareImages(images);
-
-        // Run tokenization
-        const text_inputs = this.tokenizer(candidate_labels, {
-            padding: true,
-            truncation: true,
-        });
-
-        // Run processor
-        const model_inputs = await this.processor(preparedImages);
-
-        // Since non-maximum suppression is performed for exporting, we need to
-        // process each image separately. For more information, see:
-        // https://github.com/huggingface/optimum/blob/e3b7efb1257c011db907ef40ab340e795cc5684c/optimum/exporters/onnx/model_configs.py#L1028-L1032
-        const toReturn = [];
-        for (let i = 0; i < preparedImages.length; ++i) {
-            const image = preparedImages[i];
-            const imageSize = percentage ? null : [[image.height, image.width]];
-            const pixel_values = model_inputs.pixel_values[i].unsqueeze_(0);
-
-            // Run model with both text and pixel inputs
-            const output = await this.model({ ...text_inputs, pixel_values });
-
-            let result;
-            if ('post_process_grounded_object_detection' in this.processor) {
-                // @ts-ignore
-                const processed = this.processor.post_process_grounded_object_detection(
-                    output,
-                    text_inputs.input_ids,
-                    {
-                        // TODO: support separate threshold values
-                        box_threshold: threshold,
-                        text_threshold: threshold,
-                        target_sizes: imageSize,
-                    },
-                )[0];
-                result = processed.boxes.map((box, i) => ({
-                    score: processed.scores[i],
-                    label: processed.labels[i],
-                    box: get_bounding_box(box, !percentage),
-                }))
-            } else {
-                // @ts-ignore
-                const processed = this.processor.image_processor.post_process_object_detection(output, threshold, imageSize, true)[0];
-                result = processed.boxes.map((box, i) => ({
-                    score: processed.scores[i],
-                    label: candidate_labels[processed.classes[i]],
-                    box: get_bounding_box(box, !percentage),
-                }))
-            }
-            result.sort((a, b) => b.score - a.score);
-
-            if (top_k !== null) {
-                result = result.slice(0, top_k);
-            }
-            toReturn.push(result)
-        }
-
-        return isBatched ? toReturn : toReturn[0];
-    }
+    return isBatched ? toReturn : toReturn[0];
+  }
 }
 
 /**
@@ -2729,55 +2850,58 @@ export class ZeroShotObjectDetectionPipeline extends (/** @type {new (options: T
  * // [{ answer: 'us-001' }]
  * ```
  */
-export class DocumentQuestionAnsweringPipeline extends (/** @type {new (options: TextImagePipelineConstructorArgs) => DocumentQuestionAnsweringPipelineType} */ (Pipeline)) {
+export class DocumentQuestionAnsweringPipeline
+  extends /** @type {new (options: TextImagePipelineConstructorArgs) => DocumentQuestionAnsweringPipelineType} */ (
+    Pipeline
+  )
+{
+  /**
+   * Create a new DocumentQuestionAnsweringPipeline.
+   * @param {TextImagePipelineConstructorArgs} options An object used to instantiate the pipeline.
+   */
+  constructor(options) {
+    super(options);
+  }
 
-    /**
-     * Create a new DocumentQuestionAnsweringPipeline.
-     * @param {TextImagePipelineConstructorArgs} options An object used to instantiate the pipeline.
-     */
-    constructor(options) {
-        super(options);
+  /** @type {DocumentQuestionAnsweringPipelineCallback} */
+  async _call(image, question, generate_kwargs = {}) {
+    // NOTE: For now, we only support a batch size of 1
+
+    // Preprocess image
+    const preparedImage = (await prepareImages(image))[0];
+    const { pixel_values } = await this.processor(preparedImage);
+
+    // Run tokenization
+    const task_prompt = `<s_docvqa><s_question>${question}</s_question><s_answer>`;
+    const decoder_input_ids = this.tokenizer(task_prompt, {
+      add_special_tokens: false,
+      padding: true,
+      truncation: true,
+    }).input_ids;
+
+    // Run model
+    const output = await this.model.generate({
+      inputs: pixel_values,
+      // @ts-expect-error TS2339
+      max_length: this.model.config.decoder.max_position_embeddings,
+      decoder_input_ids,
+      ...generate_kwargs,
+    });
+
+    // Decode output
+    const decoded = this.tokenizer.batch_decode(
+      /** @type {Tensor} */ (output),
+    )[0];
+
+    // Parse answer
+    const match = decoded.match(/<s_answer>(.*?)<\/s_answer>/);
+    let answer = null;
+    if (match && match.length >= 2) {
+      answer = match[1].trim();
     }
-
-    /** @type {DocumentQuestionAnsweringPipelineCallback} */
-    async _call(image, question, generate_kwargs = {}) {
-
-        // NOTE: For now, we only support a batch size of 1
-
-        // Preprocess image
-        const preparedImage = (await prepareImages(image))[0];
-        const { pixel_values } = await this.processor(preparedImage);
-
-        // Run tokenization
-        const task_prompt = `<s_docvqa><s_question>${question}</s_question><s_answer>`;
-        const decoder_input_ids = this.tokenizer(task_prompt, {
-            add_special_tokens: false,
-            padding: true,
-            truncation: true,
-        }).input_ids;
-
-        // Run model
-        const output = await this.model.generate({
-            inputs: pixel_values,
-            // @ts-expect-error TS2339
-            max_length: this.model.config.decoder.max_position_embeddings,
-            decoder_input_ids,
-            ...generate_kwargs,
-        });
-
-        // Decode output
-        const decoded = this.tokenizer.batch_decode(/** @type {Tensor} */(output))[0];
-
-        // Parse answer
-        const match = decoded.match(/<s_answer>(.*?)<\/s_answer>/);
-        let answer = null;
-        if (match && match.length >= 2) {
-            answer = match[1].trim();
-        }
-        return [{ answer }];
-    }
+    return [{ answer }];
+  }
 }
-
 
 /**
  * @typedef {Object} VocoderOptions
@@ -2836,95 +2960,99 @@ export class DocumentQuestionAnsweringPipeline extends (/** @type {new (options:
  * // }
  * ```
  */
-export class TextToAudioPipeline extends (/** @type {new (options: TextToAudioPipelineConstructorArgs) => TextToAudioPipelineType} */ (Pipeline)) {
-    DEFAULT_VOCODER_ID = "Xenova/speecht5_hifigan"
+export class TextToAudioPipeline
+  extends /** @type {new (options: TextToAudioPipelineConstructorArgs) => TextToAudioPipelineType} */ (
+    Pipeline
+  )
+{
+  DEFAULT_VOCODER_ID = "Xenova/speecht5_hifigan";
 
-    /**
-     * Create a new TextToAudioPipeline.
-     * @param {TextToAudioPipelineConstructorArgs} options An object used to instantiate the pipeline.
-     */
-    constructor(options) {
-        super(options);
+  /**
+   * Create a new TextToAudioPipeline.
+   * @param {TextToAudioPipelineConstructorArgs} options An object used to instantiate the pipeline.
+   */
+  constructor(options) {
+    super(options);
 
-        // TODO: Find a better way for `pipeline` to set the default vocoder
-        this.vocoder = options.vocoder ?? null;
+    // TODO: Find a better way for `pipeline` to set the default vocoder
+    this.vocoder = options.vocoder ?? null;
+  }
+
+  /** @type {TextToAudioPipelineCallback} */
+  async _call(text_inputs, { speaker_embeddings = null } = {}) {
+    // If this.processor is not set, we are using a `AutoModelForTextToWaveform` model
+    if (this.processor) {
+      return this._call_text_to_spectrogram(text_inputs, {
+        speaker_embeddings,
+      });
+    } else {
+      return this._call_text_to_waveform(text_inputs);
+    }
+  }
+
+  async _call_text_to_waveform(text_inputs) {
+    // Run tokenization
+    const inputs = this.tokenizer(text_inputs, {
+      padding: true,
+      truncation: true,
+    });
+
+    // Generate waveform
+    const { waveform } = await this.model(inputs);
+
+    // @ts-expect-error TS2339
+    const sampling_rate = this.model.config.sampling_rate;
+    return new RawAudio(waveform.data, sampling_rate);
+  }
+
+  async _call_text_to_spectrogram(text_inputs, { speaker_embeddings }) {
+    // Load vocoder, if not provided
+    if (!this.vocoder) {
+      console.log("No vocoder specified, using default HifiGan vocoder.");
+      this.vocoder = await AutoModel.from_pretrained(this.DEFAULT_VOCODER_ID, {
+        dtype: "fp32",
+      });
     }
 
-
-    /** @type {TextToAudioPipelineCallback} */
-    async _call(text_inputs, {
-        speaker_embeddings = null,
-    } = {}) {
-
-        // If this.processor is not set, we are using a `AutoModelForTextToWaveform` model
-        if (this.processor) {
-            return this._call_text_to_spectrogram(text_inputs, { speaker_embeddings });
-        } else {
-            return this._call_text_to_waveform(text_inputs);
-        }
+    // Load speaker embeddings as Float32Array from path/URL
+    if (
+      typeof speaker_embeddings === "string" ||
+      speaker_embeddings instanceof URL
+    ) {
+      // Load from URL with fetch
+      speaker_embeddings = new Float32Array(
+        await (await fetch(speaker_embeddings)).arrayBuffer(),
+      );
     }
 
-    async _call_text_to_waveform(text_inputs) {
-
-        // Run tokenization
-        const inputs = this.tokenizer(text_inputs, {
-            padding: true,
-            truncation: true,
-        });
-
-        // Generate waveform
-        const { waveform } = await this.model(inputs);
-
-        // @ts-expect-error TS2339
-        const sampling_rate = this.model.config.sampling_rate;
-        return new RawAudio(
-            waveform.data,
-            sampling_rate,
-        )
+    if (speaker_embeddings instanceof Float32Array) {
+      speaker_embeddings = new Tensor("float32", speaker_embeddings, [
+        1,
+        speaker_embeddings.length,
+      ]);
+    } else if (!(speaker_embeddings instanceof Tensor)) {
+      throw new Error(
+        "Speaker embeddings must be a `Tensor`, `Float32Array`, `string`, or `URL`.",
+      );
     }
 
-    async _call_text_to_spectrogram(text_inputs, { speaker_embeddings }) {
+    // Run tokenization
+    const { input_ids } = this.tokenizer(text_inputs, {
+      padding: true,
+      truncation: true,
+    });
 
-        // Load vocoder, if not provided
-        if (!this.vocoder) {
-            console.log('No vocoder specified, using default HifiGan vocoder.');
-            this.vocoder = await AutoModel.from_pretrained(this.DEFAULT_VOCODER_ID, { dtype: 'fp32' });
-        }
+    // NOTE: At this point, we are guaranteed that `speaker_embeddings` is a `Tensor`
+    // @ts-ignore
+    const { waveform } = await this.model.generate_speech(
+      input_ids,
+      speaker_embeddings,
+      { vocoder: this.vocoder },
+    );
 
-        // Load speaker embeddings as Float32Array from path/URL
-        if (typeof speaker_embeddings === 'string' || speaker_embeddings instanceof URL) {
-            // Load from URL with fetch
-            speaker_embeddings = new Float32Array(
-                await (await fetch(speaker_embeddings)).arrayBuffer()
-            );
-        }
-
-        if (speaker_embeddings instanceof Float32Array) {
-            speaker_embeddings = new Tensor(
-                'float32',
-                speaker_embeddings,
-                [1, speaker_embeddings.length]
-            )
-        } else if (!(speaker_embeddings instanceof Tensor)) {
-            throw new Error("Speaker embeddings must be a `Tensor`, `Float32Array`, `string`, or `URL`.")
-        }
-
-        // Run tokenization
-        const { input_ids } = this.tokenizer(text_inputs, {
-            padding: true,
-            truncation: true,
-        });
-
-        // NOTE: At this point, we are guaranteed that `speaker_embeddings` is a `Tensor`
-        // @ts-ignore
-        const { waveform } = await this.model.generate_speech(input_ids, speaker_embeddings, { vocoder: this.vocoder });
-
-        const sampling_rate = this.processor.feature_extractor.config.sampling_rate;
-        return new RawAudio(
-            waveform.data,
-            sampling_rate,
-        )
-    }
+    const sampling_rate = this.processor.feature_extractor.config.sampling_rate;
+    return new RawAudio(waveform.data, sampling_rate);
+  }
 }
 
 /**
@@ -2951,31 +3079,39 @@ export class TextToAudioPipeline extends (/** @type {new (options: TextToAudioPi
  * // }
  * ```
  */
-export class ImageToImagePipeline extends (/** @type {new (options: ImagePipelineConstructorArgs) => ImageToImagePipelineType} */ (Pipeline)) {
-    /**
-     * Create a new ImageToImagePipeline.
-     * @param {ImagePipelineConstructorArgs} options An object used to instantiate the pipeline.
-     */
-    constructor(options) {
-        super(options);
+export class ImageToImagePipeline
+  extends /** @type {new (options: ImagePipelineConstructorArgs) => ImageToImagePipelineType} */ (
+    Pipeline
+  )
+{
+  /**
+   * Create a new ImageToImagePipeline.
+   * @param {ImagePipelineConstructorArgs} options An object used to instantiate the pipeline.
+   */
+  constructor(options) {
+    super(options);
+  }
+
+  /** @type {ImageToImagePipelineCallback} */
+  async _call(images) {
+    const preparedImages = await prepareImages(images);
+    const inputs = await this.processor(preparedImages);
+    const outputs = await this.model(inputs);
+
+    /** @type {RawImage[]} */
+    const toReturn = [];
+    for (const batch of outputs.reconstruction) {
+      const output = batch
+        .squeeze()
+        .clamp_(0, 1)
+        .mul_(255)
+        .round_()
+        .to("uint8");
+      toReturn.push(RawImage.fromTensor(output));
     }
 
-    /** @type {ImageToImagePipelineCallback} */
-    async _call(images) {
-
-        const preparedImages = await prepareImages(images);
-        const inputs = await this.processor(preparedImages);
-        const outputs = await this.model(inputs);
-
-        /** @type {RawImage[]} */
-        const toReturn = [];
-        for (const batch of outputs.reconstruction) {
-            const output = batch.squeeze().clamp_(0, 1).mul_(255).round_().to('uint8');
-            toReturn.push(RawImage.fromTensor(output));
-        }
-
-        return toReturn.length > 1 ? toReturn : toReturn[0];
-    }
+    return toReturn.length > 1 ? toReturn : toReturn[0];
+  }
 }
 
 /**
@@ -3014,356 +3150,373 @@ export class ImageToImagePipeline extends (/** @type {new (options: ImagePipelin
  * // }
  * ```
  */
-export class DepthEstimationPipeline extends (/** @type {new (options: ImagePipelineConstructorArgs) => DepthEstimationPipelineType} */ (Pipeline)) {
-    /**
-     * Create a new DepthEstimationPipeline.
-     * @param {ImagePipelineConstructorArgs} options An object used to instantiate the pipeline.
-     */
-    constructor(options) {
-        super(options);
+export class DepthEstimationPipeline
+  extends /** @type {new (options: ImagePipelineConstructorArgs) => DepthEstimationPipelineType} */ (
+    Pipeline
+  )
+{
+  /**
+   * Create a new DepthEstimationPipeline.
+   * @param {ImagePipelineConstructorArgs} options An object used to instantiate the pipeline.
+   */
+  constructor(options) {
+    super(options);
+  }
+
+  /** @type {DepthEstimationPipelineCallback} */
+  async _call(images) {
+    const preparedImages = await prepareImages(images);
+
+    const inputs = await this.processor(preparedImages);
+    const { predicted_depth } = await this.model(inputs);
+
+    const toReturn = [];
+    for (let i = 0; i < preparedImages.length; ++i) {
+      const batch = predicted_depth[i];
+      const [height, width] = batch.dims.slice(-2);
+      const [new_width, new_height] = preparedImages[i].size;
+
+      // Interpolate to original size
+      const prediction = (
+        await interpolate_4d(batch.view(1, 1, height, width), {
+          size: [new_height, new_width],
+          mode: "bilinear",
+        })
+      ).view(new_height, new_width);
+
+      const minval = /** @type {number} */ (prediction.min().item());
+      const maxval = /** @type {number} */ (prediction.max().item());
+      const formatted = prediction
+        .sub(minval)
+        .div_(maxval - minval)
+        .mul_(255)
+        .to("uint8")
+        .unsqueeze(0);
+      const depth = RawImage.fromTensor(formatted);
+      toReturn.push({
+        predicted_depth: prediction,
+        depth,
+      });
     }
 
-    /** @type {DepthEstimationPipelineCallback} */
-    async _call(images) {
-
-        const preparedImages = await prepareImages(images);
-
-        const inputs = await this.processor(preparedImages);
-        const { predicted_depth } = await this.model(inputs);
-
-        const toReturn = [];
-        for (let i = 0; i < preparedImages.length; ++i) {
-            const batch = predicted_depth[i];
-            const [height, width] = batch.dims.slice(-2);
-            const [new_width, new_height] = preparedImages[i].size;
-
-            // Interpolate to original size
-            const prediction = (await interpolate_4d(batch.view(1, 1, height, width), {
-                size: [new_height, new_width],
-                mode: 'bilinear',
-            })).view(new_height, new_width);
-
-            const minval = /** @type {number} */(prediction.min().item());
-            const maxval = /** @type {number} */(prediction.max().item());
-            const formatted = prediction.sub(minval).div_(maxval - minval).mul_(255).to('uint8').unsqueeze(0);
-            const depth = RawImage.fromTensor(formatted);
-            toReturn.push({
-                predicted_depth: prediction,
-                depth,
-            });
-        }
-
-        return toReturn.length > 1 ? toReturn : toReturn[0];
-    }
+    return toReturn.length > 1 ? toReturn : toReturn[0];
+  }
 }
 
 const SUPPORTED_TASKS = Object.freeze({
-    "text-classification": {
-        "tokenizer": AutoTokenizer,
-        "pipeline": TextClassificationPipeline,
-        "model": AutoModelForSequenceClassification,
-        "default": {
-            // TODO: replace with original
-            // "model": "distilbert-base-uncased-finetuned-sst-2-english",
-            "model": "Xenova/distilbert-base-uncased-finetuned-sst-2-english",
-        },
-        "type": "text",
+  "text-classification": {
+    tokenizer: AutoTokenizer,
+    pipeline: TextClassificationPipeline,
+    model: AutoModelForSequenceClassification,
+    default: {
+      // TODO: replace with original
+      // "model": "distilbert-base-uncased-finetuned-sst-2-english",
+      model: "Xenova/distilbert-base-uncased-finetuned-sst-2-english",
     },
-    "token-classification": {
-        "tokenizer": AutoTokenizer,
-        "pipeline": TokenClassificationPipeline,
-        "model": AutoModelForTokenClassification,
-        "default": {
-            // TODO: replace with original
-            // "model": "Davlan/bert-base-multilingual-cased-ner-hrl",
-            "model": "Xenova/bert-base-multilingual-cased-ner-hrl",
-        },
-        "type": "text",
+    type: "text",
+  },
+  "token-classification": {
+    tokenizer: AutoTokenizer,
+    pipeline: TokenClassificationPipeline,
+    model: AutoModelForTokenClassification,
+    default: {
+      // TODO: replace with original
+      // "model": "Davlan/bert-base-multilingual-cased-ner-hrl",
+      model: "Xenova/bert-base-multilingual-cased-ner-hrl",
     },
-    "question-answering": {
-        "tokenizer": AutoTokenizer,
-        "pipeline": QuestionAnsweringPipeline,
-        "model": AutoModelForQuestionAnswering,
-        "default": {
-            // TODO: replace with original
-            // "model": "distilbert-base-cased-distilled-squad",
-            "model": "Xenova/distilbert-base-cased-distilled-squad",
-        },
-        "type": "text",
+    type: "text",
+  },
+  "question-answering": {
+    tokenizer: AutoTokenizer,
+    pipeline: QuestionAnsweringPipeline,
+    model: AutoModelForQuestionAnswering,
+    default: {
+      // TODO: replace with original
+      // "model": "distilbert-base-cased-distilled-squad",
+      model: "Xenova/distilbert-base-cased-distilled-squad",
     },
+    type: "text",
+  },
 
-    "fill-mask": {
-        "tokenizer": AutoTokenizer,
-        "pipeline": FillMaskPipeline,
-        "model": AutoModelForMaskedLM,
-        "default": {
-            // TODO: replace with original
-            // "model": "bert-base-uncased",
-            "model": "Xenova/bert-base-uncased",
-        },
-        "type": "text",
+  "fill-mask": {
+    tokenizer: AutoTokenizer,
+    pipeline: FillMaskPipeline,
+    model: AutoModelForMaskedLM,
+    default: {
+      // TODO: replace with original
+      // "model": "bert-base-uncased",
+      model: "Xenova/bert-base-uncased",
     },
-    "summarization": {
-        "tokenizer": AutoTokenizer,
-        "pipeline": SummarizationPipeline,
-        "model": AutoModelForSeq2SeqLM,
-        "default": {
-            // TODO: replace with original
-            // "model": "sshleifer/distilbart-cnn-6-6",
-            "model": "Xenova/distilbart-cnn-6-6",
-        },
-        "type": "text",
+    type: "text",
+  },
+  summarization: {
+    tokenizer: AutoTokenizer,
+    pipeline: SummarizationPipeline,
+    model: AutoModelForSeq2SeqLM,
+    default: {
+      // TODO: replace with original
+      // "model": "sshleifer/distilbart-cnn-6-6",
+      model: "Xenova/distilbart-cnn-6-6",
     },
-    "translation": {
-        "tokenizer": AutoTokenizer,
-        "pipeline": TranslationPipeline,
-        "model": AutoModelForSeq2SeqLM,
-        "default": {
-            // TODO: replace with original
-            // "model": "t5-small",
-            "model": "Xenova/t5-small",
-        },
-        "type": "text",
+    type: "text",
+  },
+  translation: {
+    tokenizer: AutoTokenizer,
+    pipeline: TranslationPipeline,
+    model: AutoModelForSeq2SeqLM,
+    default: {
+      // TODO: replace with original
+      // "model": "t5-small",
+      model: "Xenova/t5-small",
     },
-    "text2text-generation": {
-        "tokenizer": AutoTokenizer,
-        "pipeline": Text2TextGenerationPipeline,
-        "model": AutoModelForSeq2SeqLM,
-        "default": {
-            // TODO: replace with original
-            // "model": "google/flan-t5-small",
-            "model": "Xenova/flan-t5-small",
-        },
-        "type": "text",
+    type: "text",
+  },
+  "text2text-generation": {
+    tokenizer: AutoTokenizer,
+    pipeline: Text2TextGenerationPipeline,
+    model: AutoModelForSeq2SeqLM,
+    default: {
+      // TODO: replace with original
+      // "model": "google/flan-t5-small",
+      model: "Xenova/flan-t5-small",
     },
-    "text-generation": {
-        "tokenizer": AutoTokenizer,
-        "pipeline": TextGenerationPipeline,
-        "model": AutoModelForCausalLM,
-        "default": {
-            // TODO: replace with original
-            // "model": "gpt2",
-            "model": "Xenova/gpt2",
-        },
-        "type": "text",
+    type: "text",
+  },
+  "text-generation": {
+    tokenizer: AutoTokenizer,
+    pipeline: TextGenerationPipeline,
+    model: AutoModelForCausalLM,
+    default: {
+      // TODO: replace with original
+      // "model": "gpt2",
+      model: "Xenova/gpt2",
     },
-    "zero-shot-classification": {
-        "tokenizer": AutoTokenizer,
-        "pipeline": ZeroShotClassificationPipeline,
-        "model": AutoModelForSequenceClassification,
-        "default": {
-            // TODO: replace with original
-            // "model": "typeform/distilbert-base-uncased-mnli",
-            "model": "Xenova/distilbert-base-uncased-mnli",
-        },
-        "type": "text",
+    type: "text",
+  },
+  "zero-shot-classification": {
+    tokenizer: AutoTokenizer,
+    pipeline: ZeroShotClassificationPipeline,
+    model: AutoModelForSequenceClassification,
+    default: {
+      // TODO: replace with original
+      // "model": "typeform/distilbert-base-uncased-mnli",
+      model: "Xenova/distilbert-base-uncased-mnli",
     },
-    "audio-classification": {
-        "pipeline": AudioClassificationPipeline,
-        "model": AutoModelForAudioClassification,
-        "processor": AutoProcessor,
-        "default": {
-            // TODO: replace with original
-            // "model": "superb/wav2vec2-base-superb-ks",
-            "model": "Xenova/wav2vec2-base-superb-ks",
-        },
-        "type": "audio",
+    type: "text",
+  },
+  "audio-classification": {
+    pipeline: AudioClassificationPipeline,
+    model: AutoModelForAudioClassification,
+    processor: AutoProcessor,
+    default: {
+      // TODO: replace with original
+      // "model": "superb/wav2vec2-base-superb-ks",
+      model: "Xenova/wav2vec2-base-superb-ks",
     },
-    "zero-shot-audio-classification": {
-        "tokenizer": AutoTokenizer,
-        "pipeline": ZeroShotAudioClassificationPipeline,
-        "model": AutoModel,
-        "processor": AutoProcessor,
-        "default": {
-            // TODO: replace with original
-            // "model": "laion/clap-htsat-fused",
-            "model": "Xenova/clap-htsat-unfused",
-        },
-        "type": "multimodal",
+    type: "audio",
+  },
+  "zero-shot-audio-classification": {
+    tokenizer: AutoTokenizer,
+    pipeline: ZeroShotAudioClassificationPipeline,
+    model: AutoModel,
+    processor: AutoProcessor,
+    default: {
+      // TODO: replace with original
+      // "model": "laion/clap-htsat-fused",
+      model: "Xenova/clap-htsat-unfused",
     },
-    "automatic-speech-recognition": {
-        "tokenizer": AutoTokenizer,
-        "pipeline": AutomaticSpeechRecognitionPipeline,
-        "model": [AutoModelForSpeechSeq2Seq, AutoModelForCTC],
-        "processor": AutoProcessor,
-        "default": {
-            // TODO: replace with original
-            // "model": "openai/whisper-tiny.en",
-            "model": "Xenova/whisper-tiny.en",
-        },
-        "type": "multimodal",
+    type: "multimodal",
+  },
+  "automatic-speech-recognition": {
+    tokenizer: AutoTokenizer,
+    pipeline: AutomaticSpeechRecognitionPipeline,
+    model: [AutoModelForSpeechSeq2Seq, AutoModelForCTC],
+    processor: AutoProcessor,
+    default: {
+      // TODO: replace with original
+      // "model": "openai/whisper-tiny.en",
+      model: "Xenova/whisper-tiny.en",
     },
-    "text-to-audio": {
-        "tokenizer": AutoTokenizer,
-        "pipeline": TextToAudioPipeline,
-        "model": [AutoModelForTextToWaveform, AutoModelForTextToSpectrogram],
-        "processor": [AutoProcessor, /* Some don't use a processor */ null],
-        "default": {
-            // TODO: replace with original
-            // "model": "microsoft/speecht5_tts",
-            "model": "Xenova/speecht5_tts",
-        },
-        "type": "text",
+    type: "multimodal",
+  },
+  "text-to-audio": {
+    tokenizer: AutoTokenizer,
+    pipeline: TextToAudioPipeline,
+    model: [AutoModelForTextToWaveform, AutoModelForTextToSpectrogram],
+    processor: [AutoProcessor, /* Some don't use a processor */ null],
+    default: {
+      // TODO: replace with original
+      // "model": "microsoft/speecht5_tts",
+      model: "Xenova/speecht5_tts",
     },
-    "image-to-text": {
-        "tokenizer": AutoTokenizer,
-        "pipeline": ImageToTextPipeline,
-        "model": AutoModelForVision2Seq,
-        "processor": AutoProcessor,
-        "default": {
-            // TODO: replace with original
-            // "model": "nlpconnect/vit-gpt2-image-captioning",
-            "model": "Xenova/vit-gpt2-image-captioning",
-        },
-        "type": "multimodal",
+    type: "text",
+  },
+  "image-to-text": {
+    tokenizer: AutoTokenizer,
+    pipeline: ImageToTextPipeline,
+    model: AutoModelForVision2Seq,
+    processor: AutoProcessor,
+    default: {
+      // TODO: replace with original
+      // "model": "nlpconnect/vit-gpt2-image-captioning",
+      model: "Xenova/vit-gpt2-image-captioning",
     },
+    type: "multimodal",
+  },
 
-    "image-classification": {
-        // no tokenizer
-        "pipeline": ImageClassificationPipeline,
-        "model": AutoModelForImageClassification,
-        "processor": AutoProcessor,
-        "default": {
-            // TODO: replace with original
-            // "model": "google/vit-base-patch16-224",
-            "model": "Xenova/vit-base-patch16-224",
-        },
-        "type": "multimodal",
+  "image-classification": {
+    // no tokenizer
+    pipeline: ImageClassificationPipeline,
+    model: AutoModelForImageClassification,
+    processor: AutoProcessor,
+    default: {
+      // TODO: replace with original
+      // "model": "google/vit-base-patch16-224",
+      model: "Xenova/vit-base-patch16-224",
     },
+    type: "multimodal",
+  },
 
-    "image-segmentation": {
-        // no tokenizer
-        "pipeline": ImageSegmentationPipeline,
-        "model": [AutoModelForImageSegmentation, AutoModelForSemanticSegmentation, AutoModelForUniversalSegmentation],
-        "processor": AutoProcessor,
-        "default": {
-            // TODO: replace with original
-            // "model": "facebook/detr-resnet-50-panoptic",
-            "model": "Xenova/detr-resnet-50-panoptic",
-        },
-        "type": "multimodal",
+  "image-segmentation": {
+    // no tokenizer
+    pipeline: ImageSegmentationPipeline,
+    model: [
+      AutoModelForImageSegmentation,
+      AutoModelForSemanticSegmentation,
+      AutoModelForUniversalSegmentation,
+    ],
+    processor: AutoProcessor,
+    default: {
+      // TODO: replace with original
+      // "model": "facebook/detr-resnet-50-panoptic",
+      model: "Xenova/detr-resnet-50-panoptic",
     },
-    "background-removal": {
-        // no tokenizer
-        "pipeline": BackgroundRemovalPipeline,
-        "model": [AutoModelForImageSegmentation, AutoModelForSemanticSegmentation, AutoModelForUniversalSegmentation],
-        "processor": AutoProcessor,
-        "default": {
-            "model": "Xenova/modnet",
-        },
-        "type": "image",
+    type: "multimodal",
+  },
+  "background-removal": {
+    // no tokenizer
+    pipeline: BackgroundRemovalPipeline,
+    model: [
+      AutoModelForImageSegmentation,
+      AutoModelForSemanticSegmentation,
+      AutoModelForUniversalSegmentation,
+    ],
+    processor: AutoProcessor,
+    default: {
+      model: "Xenova/modnet",
     },
+    type: "image",
+  },
 
-    "zero-shot-image-classification": {
-        "tokenizer": AutoTokenizer,
-        "pipeline": ZeroShotImageClassificationPipeline,
-        "model": AutoModel,
-        "processor": AutoProcessor,
-        "default": {
-            // TODO: replace with original
-            // "model": "openai/clip-vit-base-patch32",
-            "model": "Xenova/clip-vit-base-patch32",
-        },
-        "type": "multimodal",
+  "zero-shot-image-classification": {
+    tokenizer: AutoTokenizer,
+    pipeline: ZeroShotImageClassificationPipeline,
+    model: AutoModel,
+    processor: AutoProcessor,
+    default: {
+      // TODO: replace with original
+      // "model": "openai/clip-vit-base-patch32",
+      model: "Xenova/clip-vit-base-patch32",
     },
+    type: "multimodal",
+  },
 
-    "object-detection": {
-        // no tokenizer
-        "pipeline": ObjectDetectionPipeline,
-        "model": AutoModelForObjectDetection,
-        "processor": AutoProcessor,
-        "default": {
-            // TODO: replace with original
-            // "model": "facebook/detr-resnet-50",
-            "model": "Xenova/detr-resnet-50",
-        },
-        "type": "multimodal",
+  "object-detection": {
+    // no tokenizer
+    pipeline: ObjectDetectionPipeline,
+    model: AutoModelForObjectDetection,
+    processor: AutoProcessor,
+    default: {
+      // TODO: replace with original
+      // "model": "facebook/detr-resnet-50",
+      model: "Xenova/detr-resnet-50",
     },
-    "zero-shot-object-detection": {
-        "tokenizer": AutoTokenizer,
-        "pipeline": ZeroShotObjectDetectionPipeline,
-        "model": AutoModelForZeroShotObjectDetection,
-        "processor": AutoProcessor,
-        "default": {
-            // TODO: replace with original
-            // "model": "google/owlvit-base-patch32",
-            "model": "Xenova/owlvit-base-patch32",
-        },
-        "type": "multimodal",
+    type: "multimodal",
+  },
+  "zero-shot-object-detection": {
+    tokenizer: AutoTokenizer,
+    pipeline: ZeroShotObjectDetectionPipeline,
+    model: AutoModelForZeroShotObjectDetection,
+    processor: AutoProcessor,
+    default: {
+      // TODO: replace with original
+      // "model": "google/owlvit-base-patch32",
+      model: "Xenova/owlvit-base-patch32",
     },
-    "document-question-answering": {
-        "tokenizer": AutoTokenizer,
-        "pipeline": DocumentQuestionAnsweringPipeline,
-        "model": AutoModelForDocumentQuestionAnswering,
-        "processor": AutoProcessor,
-        "default": {
-            // TODO: replace with original
-            // "model": "naver-clova-ix/donut-base-finetuned-docvqa",
-            "model": "Xenova/donut-base-finetuned-docvqa",
-        },
-        "type": "multimodal",
+    type: "multimodal",
+  },
+  "document-question-answering": {
+    tokenizer: AutoTokenizer,
+    pipeline: DocumentQuestionAnsweringPipeline,
+    model: AutoModelForDocumentQuestionAnswering,
+    processor: AutoProcessor,
+    default: {
+      // TODO: replace with original
+      // "model": "naver-clova-ix/donut-base-finetuned-docvqa",
+      model: "Xenova/donut-base-finetuned-docvqa",
     },
-    "image-to-image": {
-        // no tokenizer
-        "pipeline": ImageToImagePipeline,
-        "model": AutoModelForImageToImage,
-        "processor": AutoProcessor,
-        "default": {
-            // TODO: replace with original
-            // "model": "caidas/swin2SR-classical-sr-x2-64",
-            "model": "Xenova/swin2SR-classical-sr-x2-64",
-        },
-        "type": "image",
+    type: "multimodal",
+  },
+  "image-to-image": {
+    // no tokenizer
+    pipeline: ImageToImagePipeline,
+    model: AutoModelForImageToImage,
+    processor: AutoProcessor,
+    default: {
+      // TODO: replace with original
+      // "model": "caidas/swin2SR-classical-sr-x2-64",
+      model: "Xenova/swin2SR-classical-sr-x2-64",
     },
-    "depth-estimation": {
-        // no tokenizer
-        "pipeline": DepthEstimationPipeline,
-        "model": AutoModelForDepthEstimation,
-        "processor": AutoProcessor,
-        "default": {
-            // TODO: replace with original
-            // "model": "Intel/dpt-large",
-            "model": "Xenova/dpt-large",
-        },
-        "type": "image",
+    type: "image",
+  },
+  "depth-estimation": {
+    // no tokenizer
+    pipeline: DepthEstimationPipeline,
+    model: AutoModelForDepthEstimation,
+    processor: AutoProcessor,
+    default: {
+      // TODO: replace with original
+      // "model": "Intel/dpt-large",
+      model: "Xenova/dpt-large",
     },
+    type: "image",
+  },
 
-    // This task serves as a useful interface for dealing with sentence-transformers (https://huggingface.co/sentence-transformers).
-    "feature-extraction": {
-        "tokenizer": AutoTokenizer,
-        "pipeline": FeatureExtractionPipeline,
-        "model": AutoModel,
-        "default": {
-            // TODO: replace with original
-            // "model": "sentence-transformers/all-MiniLM-L6-v2",
-            "model": "Xenova/all-MiniLM-L6-v2",
-        },
-        "type": "text",
+  // This task serves as a useful interface for dealing with sentence-transformers (https://huggingface.co/sentence-transformers).
+  "feature-extraction": {
+    tokenizer: AutoTokenizer,
+    pipeline: FeatureExtractionPipeline,
+    model: AutoModel,
+    default: {
+      // TODO: replace with original
+      // "model": "sentence-transformers/all-MiniLM-L6-v2",
+      model: "Xenova/all-MiniLM-L6-v2",
     },
-    "image-feature-extraction": {
-        "processor": AutoProcessor,
-        "pipeline": ImageFeatureExtractionPipeline,
-        "model": [AutoModelForImageFeatureExtraction, AutoModel],
-        "default": {
-            // TODO: replace with original
-            // "model": "google/vit-base-patch16-224",
-            "model": "Xenova/vit-base-patch16-224-in21k",
-        },
-        "type": "image",
+    type: "text",
+  },
+  "image-feature-extraction": {
+    processor: AutoProcessor,
+    pipeline: ImageFeatureExtractionPipeline,
+    model: [AutoModelForImageFeatureExtraction, AutoModel],
+    default: {
+      // TODO: replace with original
+      // "model": "google/vit-base-patch16-224",
+      model: "Xenova/vit-base-patch16-224-in21k",
     },
-})
-
+    type: "image",
+  },
+});
 
 // TODO: Add types for TASK_ALIASES
 const TASK_ALIASES = Object.freeze({
-    "sentiment-analysis": "text-classification",
-    "ner": "token-classification",
-    // "vqa": "visual-question-answering", // TODO: Add
-    "asr": "automatic-speech-recognition",
-    "text-to-speech": "text-to-audio",
+  "sentiment-analysis": "text-classification",
+  ner: "token-classification",
+  // "vqa": "visual-question-answering", // TODO: Add
+  asr: "automatic-speech-recognition",
+  "text-to-speech": "text-to-audio",
 
-    // Add for backwards compatibility
-    "embeddings": "feature-extraction",
+  // Add for backwards compatibility
+  embeddings: "feature-extraction",
 });
 
 /**
@@ -3408,74 +3561,77 @@ const TASK_ALIASES = Object.freeze({
  * @throws {Error} If an unsupported pipeline is requested.
  */
 export async function pipeline(
-    task,
-    model = null,
-    {
-        progress_callback = null,
-        config = null,
-        cache_dir = null,
-        local_files_only = false,
-        revision = 'main',
-        device = null,
-        dtype = null,
-        subfolder = 'onnx',
-        use_external_data_format = null,
-        model_file_name = null,
-        session_options = {},
-    } = {}
+  task,
+  model = null,
+  {
+    progress_callback = null,
+    config = null,
+    cache_dir = null,
+    local_files_only = false,
+    revision = "main",
+    device = null,
+    dtype = null,
+    subfolder = "onnx",
+    use_external_data_format = null,
+    model_file_name = null,
+    session_options = {},
+    handleModelText = null,
+  } = {},
 ) {
-    // Helper method to construct pipeline
+  // Helper method to construct pipeline
 
-    // Apply aliases
-    // @ts-ignore
-    task = TASK_ALIASES[task] ?? task;
+  // Apply aliases
+  // @ts-ignore
+  task = TASK_ALIASES[task] ?? task;
 
-    // Get pipeline info
-    const pipelineInfo = SUPPORTED_TASKS[task.split('_', 1)[0]];
-    if (!pipelineInfo) {
-        throw Error(`Unsupported pipeline: ${task}. Must be one of [${Object.keys(SUPPORTED_TASKS)}]`)
-    }
+  // Get pipeline info
+  const pipelineInfo = SUPPORTED_TASKS[task.split("_", 1)[0]];
+  if (!pipelineInfo) {
+    throw Error(
+      `Unsupported pipeline: ${task}. Must be one of [${Object.keys(SUPPORTED_TASKS)}]`,
+    );
+  }
 
-    // Use model if specified, otherwise, use default
-    if (!model) {
-        model = pipelineInfo.default.model
-        console.log(`No model specified. Using default model: "${model}".`);
-    }
+  // Use model if specified, otherwise, use default
+  if (!model) {
+    model = pipelineInfo.default.model;
+    console.log(`No model specified. Using default model: "${model}".`);
+  }
 
-    const pretrainedOptions = {
-        progress_callback,
-        config,
-        cache_dir,
-        local_files_only,
-        revision,
-        device,
-        dtype,
-        subfolder,
-        use_external_data_format,
-        model_file_name,
-        session_options,
-    }
+  const pretrainedOptions = {
+    progress_callback,
+    config,
+    cache_dir,
+    local_files_only,
+    revision,
+    device,
+    dtype,
+    subfolder,
+    use_external_data_format,
+    model_file_name,
+    session_options,
+    handleModelText,
+  };
 
-    const classes = new Map([
-        ['tokenizer', pipelineInfo.tokenizer],
-        ['model', pipelineInfo.model],
-        ['processor', pipelineInfo.processor],
-    ]);
+  const classes = new Map([
+    ["tokenizer", pipelineInfo.tokenizer],
+    ["model", pipelineInfo.model],
+    ["processor", pipelineInfo.processor],
+  ]);
 
-    // Load model, tokenizer, and processor (if they exist)
-    const results = await loadItems(classes, model, pretrainedOptions);
-    results.task = task;
+  // Load model, tokenizer, and processor (if they exist)
+  const results = await loadItems(classes, model, pretrainedOptions);
+  results.task = task;
 
-    dispatchCallback(progress_callback, {
-        'status': 'ready',
-        'task': task,
-        'model': model,
-    });
+  dispatchCallback(progress_callback, {
+    status: "ready",
+    task: task,
+    model: model,
+  });
 
-    const pipelineClass = pipelineInfo.pipeline;
-    return new pipelineClass(results);
+  const pipelineClass = pipelineInfo.pipeline;
+  return new pipelineClass(results);
 }
-
 
 /**
  * Helper function to get applicable model, tokenizer, or processor classes for a given model.
@@ -3485,60 +3641,58 @@ export async function pipeline(
  * @private
  */
 async function loadItems(mapping, model, pretrainedOptions) {
+  const result = Object.create(null);
 
-    const result = Object.create(null);
+  /**@type {Promise[]} */
+  const promises = [];
+  for (const [name, cls] of mapping.entries()) {
+    if (!cls) continue;
 
-    /**@type {Promise[]} */
-    const promises = [];
-    for (const [name, cls] of mapping.entries()) {
-        if (!cls) continue;
-
-        /**@type {Promise} */
-        let promise;
-        if (Array.isArray(cls)) {
-            promise = new Promise(async (resolve, reject) => {
-                let e;
-                for (const c of cls) {
-                    if (c === null) {
-                        // If null, we resolve it immediately, meaning the relevant
-                        // class was not found, but it is optional.
-                        resolve(null);
-                        return;
-                    }
-                    try {
-                        resolve(await c.from_pretrained(model, pretrainedOptions));
-                        return;
-                    } catch (err) {
-                        if (err.message?.includes('Unsupported model type')) {
-                            // If the error is due to an unsupported model type, we
-                            // save the error and try the next class.
-                            e = err;
-                        } else if (err.message?.includes('Could not locate file')) {
-                            e = err;
-                        } else {
-                            reject(err);
-                            return;
-                        }
-
-                    }
-                }
-                reject(e);
-            })
-        } else {
-            promise = cls.from_pretrained(model, pretrainedOptions);
+    /**@type {Promise} */
+    let promise;
+    if (Array.isArray(cls)) {
+      promise = new Promise(async (resolve, reject) => {
+        let e;
+        for (const c of cls) {
+          if (c === null) {
+            // If null, we resolve it immediately, meaning the relevant
+            // class was not found, but it is optional.
+            resolve(null);
+            return;
+          }
+          try {
+            resolve(await c.from_pretrained(model, pretrainedOptions));
+            return;
+          } catch (err) {
+            if (err.message?.includes("Unsupported model type")) {
+              // If the error is due to an unsupported model type, we
+              // save the error and try the next class.
+              e = err;
+            } else if (err.message?.includes("Could not locate file")) {
+              e = err;
+            } else {
+              reject(err);
+              return;
+            }
+          }
         }
-
-        result[name] = promise;
-        promises.push(promise);
+        reject(e);
+      });
+    } else {
+      promise = cls.from_pretrained(model, pretrainedOptions);
     }
 
-    // Wait for all promises to resolve (in parallel)
-    await Promise.all(promises);
+    result[name] = promise;
+    promises.push(promise);
+  }
 
-    // Then assign to result
-    for (const [name, promise] of Object.entries(result)) {
-        result[name] = await promise;
-    }
+  // Wait for all promises to resolve (in parallel)
+  await Promise.all(promises);
 
-    return result;
+  // Then assign to result
+  for (const [name, promise] of Object.entries(result)) {
+    result[name] = await promise;
+  }
+
+  return result;
 }
