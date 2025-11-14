@@ -22,7 +22,6 @@
     }
   },
   "scripts": {
-    "postinstall": "webpack && npm run typegen",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "typegen": "tsc --build --noCheck",
