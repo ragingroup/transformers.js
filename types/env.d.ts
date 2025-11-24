@@ -39,7 +39,7 @@ export const apis: Readonly<{
  * @property {boolean} useFSCache Whether to use the file system to cache files. By default, it is `true` if available.
  * @property {string} cacheDir The directory to use for caching files with the file system. By default, it is `./.cache`.
  * @property {boolean} useCustomCache Whether to use a custom cache system (defined by `customCache`), defaults to `false`.
- * @property {(path_or_repo_id: string, filename: string,fatal:boolean ,options:Object,return_path:Boolean) => string |Uint8Array} [getModelFile] - Optional function to construct the local or remote file path for a given model file.
+ * @property {(path_or_repo_id: string, filename: string,fatal:boolean ,options:Object,return_path:Boolean) => Promise<string> | Promise<Uint8Array> | Promise<ArrayBuffer>} [getModelFile] - Optional function to construct the local or remote file path for a given model file.
  * If not provided, a default implementation will be used. The function takes `(model, revision, fileName)` and returns a path or URL, or `null` if unavailable.
  * @property {Object} customCache The custom cache to use. Defaults to `null`. Note: this must be an object which
  * implements the `match` and `put` functions of the Web Cache API. For more information, see https://developer.mozilla.org/en-US/docs/Web/API/Cache.
@@ -108,7 +108,7 @@ export type TransformersEnvironment = {
      * - Optional function to construct the local or remote file path for a given model file.
      * If not provided, a default implementation will be used. The function takes `(model, revision, fileName)` and returns a path or URL, or `null` if unavailable.
      */
-    getModelFile?: (path_or_repo_id: string, filename: string, fatal: boolean, options: any, return_path: boolean) => string | Uint8Array;
+    getModelFile?: (path_or_repo_id: string, filename: string, fatal: boolean, options: any, return_path: boolean) => Promise<string> | Promise<Uint8Array> | Promise<ArrayBuffer>;
     /**
      * The custom cache to use. Defaults to `null`. Note: this must be an object which
      * implements the `match` and `put` functions of the Web Cache API. For more information, see https://developer.mozilla.org/en-US/docs/Web/API/Cache.
