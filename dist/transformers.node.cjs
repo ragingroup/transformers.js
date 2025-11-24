@@ -4929,6 +4929,8 @@ const localModelPath = RUNNING_LOCALLY
  * @property {boolean} useFSCache Whether to use the file system to cache files. By default, it is `true` if available.
  * @property {string} cacheDir The directory to use for caching files with the file system. By default, it is `./.cache`.
  * @property {boolean} useCustomCache Whether to use a custom cache system (defined by `customCache`), defaults to `false`.
+ * @property {(path_or_repo_id: string, filename: string,fatal:boolean ,options:Object,return_path:Boolean) => string |Uint8Array} [getModelFile] - Optional function to construct the local or remote file path for a given model file.
+ * If not provided, a default implementation will be used. The function takes `(model, revision, fileName)` and returns a path or URL, or `null` if unavailable.
  * @property {Object} customCache The custom cache to use. Defaults to `null`. Note: this must be an object which
  * implements the `match` and `put` functions of the Web Cache API. For more information, see https://developer.mozilla.org/en-US/docs/Web/API/Cache.
  * If you wish, you may also return a `Promise<string>` from the `match` function if you'd like to use a file path instead of `Promise<Response>`.
@@ -32369,6 +32371,15 @@ async function getModelFile(
   options = {},
   return_path = false,
 ) {
+  if (typeof _env_js__WEBPACK_IMPORTED_MODULE_2__.env.getModelFile === "function") {
+    return await _env_js__WEBPACK_IMPORTED_MODULE_2__.env.getModelFile(
+      path_or_repo_id,
+      filename,
+      fatal,
+      options,
+      return_path,
+    );
+  }
   if (!_env_js__WEBPACK_IMPORTED_MODULE_2__.env.allowLocalModels) {
     // User has disabled local models, so we just make sure other settings are correct.
 
@@ -32684,19 +32695,7 @@ async function getModelText(
   fatal = true,
   options = {},
 ) {
-  const { handleModelText } = options;
-
-  let buffer = null;
-  if (typeof handleModelText === "function") {
-    buffer = handleModelText(modelPath, fileName, fatal, options);
-
-    if (Object.prototype.toString.call(buffer) !== "[object ArrayBuffer]") {
-      if (typeof buffer !== "string") throw "handleModelText return data error";
-      return buffer;
-    }
-  } else {
-    buffer = await getModelFile(modelPath, fileName, fatal, options, false);
-  }
+  const buffer = await getModelFile(modelPath, fileName, fatal, options, false);
 
   if (buffer === null) {
     return null;
