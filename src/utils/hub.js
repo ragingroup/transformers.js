@@ -417,6 +417,15 @@ export async function getModelFile(
   options = {},
   return_path = false,
 ) {
+  if (typeof env.getModelFile === "function") {
+    return await env.getModelFile(
+      path_or_repo_id,
+      filename,
+      fatal,
+      options,
+      return_path,
+    );
+  }
   if (!env.allowLocalModels) {
     // User has disabled local models, so we just make sure other settings are correct.
 
@@ -732,19 +741,7 @@ export async function getModelText(
   fatal = true,
   options = {},
 ) {
-  const { handleModelText } = options;
-
-  let buffer = null;
-  if (typeof handleModelText === "function") {
-    buffer = handleModelText(modelPath, fileName, fatal, options);
-
-    if (Object.prototype.toString.call(buffer) !== "[object ArrayBuffer]") {
-      if (typeof buffer !== "string") throw "handleModelText return data error";
-      return buffer;
-    }
-  } else {
-    buffer = await getModelFile(modelPath, fileName, fatal, options, false);
-  }
+  const buffer = await getModelFile(modelPath, fileName, fatal, options, false);
 
   if (buffer === null) {
     return null;
