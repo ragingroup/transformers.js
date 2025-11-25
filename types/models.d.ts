@@ -2829,6 +2829,46 @@ export class SamImageSegmentationOutput extends ModelOutput {
     iou_scores: Tensor;
     pred_masks: Tensor;
 }
+export class Sam2ImageSegmentationOutput extends ModelOutput {
+    /**
+     * @param {Object} output The output of the model.
+     * @param {Tensor} output.iou_scores The output logits of the model.
+     * @param {Tensor} output.pred_masks Predicted boxes.
+     * @param {Tensor} output.object_score_logits Logits for the object score, indicating if an object is present.
+     */
+    constructor({ iou_scores, pred_masks, object_score_logits }: {
+        iou_scores: Tensor;
+        pred_masks: Tensor;
+        object_score_logits: Tensor;
+    });
+    iou_scores: Tensor;
+    pred_masks: Tensor;
+    object_score_logits: Tensor;
+}
+export class Sam2PreTrainedModel extends PreTrainedModel {
+}
+export class Sam2Model extends Sam2PreTrainedModel {
+    /**
+     * Compute image embeddings and positional image embeddings, given the pixel values of an image.
+     * @param {Object} model_inputs Object containing the model inputs.
+     * @param {Tensor} model_inputs.pixel_values Pixel values obtained using a `Sam2Processor`.
+     * @returns {Promise<Record<String, Tensor>>} The image embeddings.
+     */
+    get_image_embeddings({ pixel_values }: {
+        pixel_values: Tensor;
+    }): Promise<Record<string, Tensor>>;
+    forward(model_inputs: any): Promise<any>;
+    /**
+     * Runs the model with the provided inputs
+     * @param {Object} model_inputs Model inputs
+     * @returns {Promise<Sam2ImageSegmentationOutput>} Object containing segmentation outputs
+     */
+    _call(model_inputs: any): Promise<Sam2ImageSegmentationOutput>;
+}
+export class EdgeTamModel extends Sam2Model {
+}
+export class Sam3TrackerModel extends Sam2Model {
+}
 export class MarianPreTrainedModel extends PreTrainedModel {
 }
 export class MarianModel extends MarianPreTrainedModel {
@@ -3404,6 +3444,20 @@ export class SpeechT5ForTextToSpeech extends SpeechT5PreTrainedModel {
  * See [SpeechT5ForSpeechToText](./models#module_models.SpeechT5ForSpeechToText) for example usage.
  */
 export class SpeechT5HifiGan extends PreTrainedModel {
+}
+export class SupertonicPreTrainedModel extends PreTrainedModel {
+}
+export class SupertonicForConditionalGeneration extends SupertonicPreTrainedModel {
+    generate_speech({ input_ids, attention_mask, style, num_inference_steps, speed, }: {
+        input_ids: any;
+        attention_mask: any;
+        style: any;
+        num_inference_steps?: number;
+        speed?: number;
+    }): Promise<{
+        waveform: any;
+        durations: any;
+    }>;
 }
 export class TrOCRPreTrainedModel extends PreTrainedModel {
 }
@@ -4011,7 +4065,7 @@ export class AutoModelForTextToSpectrogram extends PretrainedMixin {
  * let model = await AutoModelForTextToSpectrogram.from_pretrained('facebook/mms-tts-eng');
  */
 export class AutoModelForTextToWaveform extends PretrainedMixin {
-    static MODEL_CLASS_MAPPINGS: Map<string, (string | typeof VitsModel)[] | (string | typeof MusicgenForConditionalGeneration)[]>[];
+    static MODEL_CLASS_MAPPINGS: Map<string, (string | typeof VitsModel)[] | (string | typeof MusicgenForConditionalGeneration)[] | (string | typeof SupertonicForConditionalGeneration)[]>[];
 }
 /**
  * Helper class which is used to instantiate pretrained causal language models with the `from_pretrained` function.
@@ -4114,7 +4168,7 @@ export class AutoModelForZeroShotObjectDetection extends PretrainedMixin {
  * let model = await AutoModelForMaskGeneration.from_pretrained('Xenova/sam-vit-base');
  */
 export class AutoModelForMaskGeneration extends PretrainedMixin {
-    static MODEL_CLASS_MAPPINGS: Map<string, (string | typeof SamModel)[]>[];
+    static MODEL_CLASS_MAPPINGS: Map<string, (string | typeof SamModel)[] | (string | typeof Sam2Model)[]>[];
 }
 export class AutoModelForCTC extends PretrainedMixin {
     static MODEL_CLASS_MAPPINGS: Map<string, (string | typeof Wav2Vec2ForCTC)[] | (string | typeof Wav2Vec2BertForCTC)[]>[];

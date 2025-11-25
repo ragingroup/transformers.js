@@ -4014,7 +4014,7 @@ class ImageProcessor extends _utils_generic_js__WEBPACK_IMPORTED_MODULE_0__.Call
 
             let image_std = this.image_std;
             if (!Array.isArray(this.image_std)) {
-                image_std = new Array(image.channels).fill(image_mean);
+                image_std = new Array(image.channels).fill(image_std);
             }
 
             if (image_mean.length !== image.channels || image_std.length !== image.channels) {
@@ -4825,7 +4825,7 @@ __webpack_require__.r(__webpack_exports__);
 
 
 
-const VERSION = '3.7.6';
+const VERSION = '3.8.0';
 
 // Check if various APIs are available (depends on environment)
 const IS_BROWSER_ENV = typeof window !== "undefined" && typeof window.document !== "undefined";
@@ -6940,6 +6940,7 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */   DistilBertPreTrainedModel: () => (/* binding */ DistilBertPreTrainedModel),
 /* harmony export */   DonutSwinModel: () => (/* binding */ DonutSwinModel),
 /* harmony export */   DonutSwinPreTrainedModel: () => (/* binding */ DonutSwinPreTrainedModel),
+/* harmony export */   EdgeTamModel: () => (/* binding */ EdgeTamModel),
 /* harmony export */   EfficientNetForImageClassification: () => (/* binding */ EfficientNetForImageClassification),
 /* harmony export */   EfficientNetModel: () => (/* binding */ EfficientNetModel),
 /* harmony export */   EfficientNetPreTrainedModel: () => (/* binding */ EfficientNetPreTrainedModel),
@@ -7232,6 +7233,10 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */   RobertaForTokenClassification: () => (/* binding */ RobertaForTokenClassification),
 /* harmony export */   RobertaModel: () => (/* binding */ RobertaModel),
 /* harmony export */   RobertaPreTrainedModel: () => (/* binding */ RobertaPreTrainedModel),
+/* harmony export */   Sam2ImageSegmentationOutput: () => (/* binding */ Sam2ImageSegmentationOutput),
+/* harmony export */   Sam2Model: () => (/* binding */ Sam2Model),
+/* harmony export */   Sam2PreTrainedModel: () => (/* binding */ Sam2PreTrainedModel),
+/* harmony export */   Sam3TrackerModel: () => (/* binding */ Sam3TrackerModel),
 /* harmony export */   SamImageSegmentationOutput: () => (/* binding */ SamImageSegmentationOutput),
 /* harmony export */   SamModel: () => (/* binding */ SamModel),
 /* harmony export */   SamPreTrainedModel: () => (/* binding */ SamPreTrainedModel),
@@ -7275,6 +7280,8 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */   Starcoder2PreTrainedModel: () => (/* binding */ Starcoder2PreTrainedModel),
 /* harmony export */   StyleTextToSpeech2Model: () => (/* binding */ StyleTextToSpeech2Model),
 /* harmony export */   StyleTextToSpeech2PreTrainedModel: () => (/* binding */ StyleTextToSpeech2PreTrainedModel),
+/* harmony export */   SupertonicForConditionalGeneration: () => (/* binding */ SupertonicForConditionalGeneration),
+/* harmony export */   SupertonicPreTrainedModel: () => (/* binding */ SupertonicPreTrainedModel),
 /* harmony export */   Swin2SRForImageSuperResolution: () => (/* binding */ Swin2SRForImageSuperResolution),
 /* harmony export */   Swin2SRModel: () => (/* binding */ Swin2SRModel),
 /* harmony export */   Swin2SRPreTrainedModel: () => (/* binding */ Swin2SRPreTrainedModel),
@@ -7462,6 +7469,7 @@ const MODEL_TYPES = {
     AudioTextToText: 10,
     AutoEncoder: 11,
     ImageAudioTextToText: 12,
+    Supertonic: 13,
 }
 //////////////////////////////////////////////////
 
@@ -8586,6 +8594,14 @@ class PreTrainedModel extends _utils_generic_js__WEBPACK_IMPORTED_MODULE_3__.Cal
                 constructSessions(pretrained_model_name_or_path, {
                     encoder_model: 'encoder_model',
                     decoder_model: 'decoder_model',
+                }, options),
+            ]);
+        } else if (modelType === MODEL_TYPES.Supertonic) {
+            info = await Promise.all([
+                constructSessions(pretrained_model_name_or_path, {
+                    text_encoder: 'text_encoder',
+                    latent_denoiser: 'latent_denoiser',
+                    voice_decoder: 'voice_decoder',
                 }, options),
             ]);
         } else { // should be MODEL_TYPES.EncoderOnly
@@ -13338,18 +13354,12 @@ class SamModel extends SamPreTrainedModel {
                 ...model_inputs,
                 ...(await this.get_image_embeddings(model_inputs))
             }
+        } else {
+            model_inputs = { ...model_inputs };
         }
 
-        if (!model_inputs.input_labels && model_inputs.input_points) {
-            // Set default input labels if they are missing
-            const shape = model_inputs.input_points.dims.slice(0, -1);
-            const numElements = shape.reduce((a, b) => a * b, 1);
-            model_inputs.input_labels = new _utils_tensor_js__WEBPACK_IMPORTED_MODULE_9__.Tensor(
-                'int64',
-                new BigInt64Array(numElements).fill(1n),
-                shape
-            );
-        }
+        // Set default input labels if they are missing
+        model_inputs.input_labels ??= (0,_utils_tensor_js__WEBPACK_IMPORTED_MODULE_9__.ones)(model_inputs.input_points.dims.slice(0, -1));
 
         const decoder_inputs = {
             image_embeddings: model_inputs.image_embeddings,
@@ -13397,6 +13407,97 @@ class SamImageSegmentationOutput extends ModelOutput {
         this.pred_masks = pred_masks;
     }
 }
+//////////////////////////////////////////////////
+
+//////////////////////////////////////////////////
+class Sam2ImageSegmentationOutput extends ModelOutput {
+    /**
+     * @param {Object} output The output of the model.
+     * @param {Tensor} output.iou_scores The output logits of the model.
+     * @param {Tensor} output.pred_masks Predicted boxes.
+     * @param {Tensor} output.object_score_logits Logits for the object score, indicating if an object is present.
+     */
+    constructor({ iou_scores, pred_masks, object_score_logits }) {
+        super();
+        this.iou_scores = iou_scores;
+        this.pred_masks = pred_masks;
+        this.object_score_logits = object_score_logits;
+    }
+}
+
+class Sam2PreTrainedModel extends PreTrainedModel { }
+class Sam2Model extends Sam2PreTrainedModel {
+
+    /**
+     * Compute image embeddings and positional image embeddings, given the pixel values of an image.
+     * @param {Object} model_inputs Object containing the model inputs.
+     * @param {Tensor} model_inputs.pixel_values Pixel values obtained using a `Sam2Processor`.
+     * @returns {Promise<Record<String, Tensor>>} The image embeddings.
+     */
+    async get_image_embeddings({ pixel_values }) {
+        // in:
+        //  - pixel_values: tensor.float32[batch_size,3,1024,1024]
+        // 
+        // out:
+        //  - image_embeddings.0: tensor.float32[batch_size,32,256,256]
+        //  - image_embeddings.1: tensor.float32[batch_size,64,128,128]
+        //  - image_embeddings.2: tensor.float32[batch_size,256,64,64]
+        return await encoderForward(this, { pixel_values });
+    }
+
+    async forward(model_inputs) {
+        // @ts-expect-error ts(2339)
+        const { num_feature_levels } = this.config.vision_config;
+        const image_embeddings_name = Array.from({ length: num_feature_levels }, (_, i) => `image_embeddings.${i}`);
+
+        if (image_embeddings_name.some(name => !model_inputs[name])) {
+            // Compute the image embeddings if they are missing
+            model_inputs = {
+                ...model_inputs,
+                ...(await this.get_image_embeddings(model_inputs))
+            }
+        } else {
+            model_inputs = { ...model_inputs };
+        }
+
+        if (model_inputs.input_points) {
+            if (model_inputs.input_boxes && model_inputs.input_boxes.dims[1] !== 1) {
+                throw new Error('When both `input_points` and `input_boxes` are provided, the number of boxes per image must be 1.');
+            }
+            const shape = model_inputs.input_points.dims;
+            model_inputs.input_labels ??= (0,_utils_tensor_js__WEBPACK_IMPORTED_MODULE_9__.ones)(shape.slice(0, -1));
+            model_inputs.input_boxes ??= (0,_utils_tensor_js__WEBPACK_IMPORTED_MODULE_9__.full)([shape[0], 0, 4], 0.0);
+
+        } else if (model_inputs.input_boxes) { // only boxes
+            const shape = model_inputs.input_boxes.dims;
+            model_inputs.input_labels = (0,_utils_tensor_js__WEBPACK_IMPORTED_MODULE_9__.full)([shape[0], shape[1], 0], -1n);
+            model_inputs.input_points = (0,_utils_tensor_js__WEBPACK_IMPORTED_MODULE_9__.full)([shape[0], 1, 0, 2], 0.0);
+
+        } else {
+            throw new Error('At least one of `input_points` or `input_boxes` must be provided.');
+        }
+
+        const prompt_encoder_mask_decoder_session = this.sessions['prompt_encoder_mask_decoder'];
+        const decoder_inputs = (0,_utils_core_js__WEBPACK_IMPORTED_MODULE_4__.pick)(model_inputs, prompt_encoder_mask_decoder_session.inputNames);
+
+        // Returns:
+        //  - iou_scores: tensor.float32[batch_size,num_boxes_or_points,3]
+        //  - pred_masks: tensor.float32[batch_size,num_boxes_or_points,3,256,256]
+        //  - object_score_logits: tensor.float32[batch_size,num_boxes_or_points,1]
+        return await sessionRun(prompt_encoder_mask_decoder_session, decoder_inputs);
+    }
+
+    /**
+     * Runs the model with the provided inputs
+     * @param {Object} model_inputs Model inputs
+     * @returns {Promise<Sam2ImageSegmentationOutput>} Object containing segmentation outputs
+     */
+    async _call(model_inputs) {
+        return new Sam2ImageSegmentationOutput(await super._call(model_inputs));
+    }
+}
+class EdgeTamModel extends Sam2Model { } // NOTE: extends Sam2Model
+class Sam3TrackerModel extends Sam2Model { } // NOTE: extends Sam2Model
 //////////////////////////////////////////////////
 
 
@@ -14098,6 +14199,61 @@ class SpeechT5HifiGan extends PreTrainedModel {
     main_input_name = 'spectrogram';
 }
 //////////////////////////////////////////////////
+
+class SupertonicPreTrainedModel extends PreTrainedModel { }
+class SupertonicForConditionalGeneration extends SupertonicPreTrainedModel {
+
+    async generate_speech({
+        // Required inputs
+        input_ids,
+        attention_mask,
+        style,
+
+        // Optional inputs
+        num_inference_steps = 5,
+        speed = 1.05,
+    }) {
+        // @ts-expect-error TS2339
+        const { sampling_rate, chunk_compress_factor, base_chunk_size, latent_dim } = this.config;
+
+        // 1. Text Encoder
+        const { last_hidden_state, durations } = await sessionRun(this.sessions['text_encoder'], {
+            input_ids, attention_mask, style,
+        });
+        durations.div_(speed); // Apply speed factor to duration
+
+        // 2. Latent Denoiser
+        const wav_len_max = durations.max().item() * sampling_rate;
+        const chunk_size = base_chunk_size * chunk_compress_factor;
+        const latent_len = Math.floor((wav_len_max + chunk_size - 1) / chunk_size);
+        const batch_size = input_ids.dims[0];
+        const latent_mask = (0,_utils_tensor_js__WEBPACK_IMPORTED_MODULE_9__.ones)([batch_size, latent_len]);
+        const num_steps = (0,_utils_tensor_js__WEBPACK_IMPORTED_MODULE_9__.full)([batch_size], num_inference_steps);
+
+        let noisy_latents = (0,_utils_tensor_js__WEBPACK_IMPORTED_MODULE_9__.randn)([batch_size, latent_dim * chunk_compress_factor, latent_len]);
+        for (let step = 0; step < num_inference_steps; ++step) {
+            const timestep = (0,_utils_tensor_js__WEBPACK_IMPORTED_MODULE_9__.full)([batch_size], step);
+            ({ denoised_latents: noisy_latents } = await sessionRun(this.sessions['latent_denoiser'], {
+                style,
+                noisy_latents,
+                latent_mask,
+                encoder_outputs: last_hidden_state,
+                attention_mask,
+                timestep,
+                num_inference_steps: num_steps,
+            }));
+        }
+
+        // 3. Voice Decoder
+        const { waveform } = await sessionRun(this.sessions['voice_decoder'], {
+            latents: noisy_latents,
+        });
+        return {
+            waveform,
+            durations,
+        }
+    }
+}
 
 
 //////////////////////////////////////////////////
@@ -15238,6 +15394,7 @@ const MODEL_FOR_TEXT_TO_SPECTROGRAM_MAPPING_NAMES = new Map([
 const MODEL_FOR_TEXT_TO_WAVEFORM_MAPPING_NAMES = new Map([
     ['vits', ['VitsModel', VitsModel]],
     ['musicgen', ['MusicgenForConditionalGeneration', MusicgenForConditionalGeneration]],
+    ['supertonic', ['SupertonicForConditionalGeneration', SupertonicForConditionalGeneration]],
 ]);
 
 const MODEL_FOR_SEQUENCE_CLASSIFICATION_MAPPING_NAMES = new Map([
@@ -15480,6 +15637,9 @@ const MODEL_FOR_UNIVERSAL_SEGMENTATION_MAPPING_NAMES = new Map([
 
 const MODEL_FOR_MASK_GENERATION_MAPPING_NAMES = new Map([
     ['sam', ['SamModel', SamModel]],
+    ['sam2', ['Sam2Model', Sam2Model]],
+    ['edgetam', ['EdgeTamModel', EdgeTamModel]],
+    ['sam3_tracker', ['Sam3TrackerModel', Sam3TrackerModel]],
 ]);
 
 const MODEL_FOR_CTC_MAPPING_NAMES = new Map([
@@ -15623,6 +15783,7 @@ const CUSTOM_MAPPING = [
     ['SnacDecoderModel', SnacDecoderModel, MODEL_TYPES.EncoderOnly],
 
     ['Gemma3nForConditionalGeneration', Gemma3nForConditionalGeneration, MODEL_TYPES.ImageAudioTextToText],
+    ['SupertonicForConditionalGeneration', SupertonicForConditionalGeneration, MODEL_TYPES.Supertonic],
 ]
 for (const [name, model, type] of CUSTOM_MAPPING) {
     MODEL_TYPE_MAPPING.set(name, type);
@@ -17977,19 +18138,21 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */   PvtImageProcessor: () => (/* reexport safe */ _pvt_image_processing_pvt_js__WEBPACK_IMPORTED_MODULE_28__.PvtImageProcessor),
 /* harmony export */   Qwen2VLImageProcessor: () => (/* reexport safe */ _qwen2_vl_image_processing_qwen2_vl_js__WEBPACK_IMPORTED_MODULE_29__.Qwen2VLImageProcessor),
 /* harmony export */   RTDetrImageProcessor: () => (/* reexport safe */ _rt_detr_image_processing_rt_detr_js__WEBPACK_IMPORTED_MODULE_30__.RTDetrImageProcessor),
+/* harmony export */   Sam2ImageProcessor: () => (/* reexport safe */ _sam2_image_processing_sam2_js__WEBPACK_IMPORTED_MODULE_32__.Sam2ImageProcessor),
+/* harmony export */   Sam3ImageProcessor: () => (/* reexport safe */ _sam3_image_processing_sam3_js__WEBPACK_IMPORTED_MODULE_33__.Sam3ImageProcessor),
 /* harmony export */   SamImageProcessor: () => (/* reexport safe */ _sam_image_processing_sam_js__WEBPACK_IMPORTED_MODULE_31__.SamImageProcessor),
-/* harmony export */   SegformerFeatureExtractor: () => (/* reexport safe */ _segformer_image_processing_segformer_js__WEBPACK_IMPORTED_MODULE_32__.SegformerFeatureExtractor),
-/* harmony export */   SegformerImageProcessor: () => (/* reexport safe */ _segformer_image_processing_segformer_js__WEBPACK_IMPORTED_MODULE_32__.SegformerImageProcessor),
-/* harmony export */   SiglipImageProcessor: () => (/* reexport safe */ _siglip_image_processing_siglip_js__WEBPACK_IMPORTED_MODULE_33__.SiglipImageProcessor),
-/* harmony export */   SmolVLMImageProcessor: () => (/* reexport safe */ _smolvlm_image_processing_smolvlm_js__WEBPACK_IMPORTED_MODULE_34__.SmolVLMImageProcessor),
-/* harmony export */   Swin2SRImageProcessor: () => (/* reexport safe */ _swin2sr_image_processing_swin2sr_js__WEBPACK_IMPORTED_MODULE_35__.Swin2SRImageProcessor),
+/* harmony export */   SegformerFeatureExtractor: () => (/* reexport safe */ _segformer_image_processing_segformer_js__WEBPACK_IMPORTED_MODULE_34__.SegformerFeatureExtractor),
+/* harmony export */   SegformerImageProcessor: () => (/* reexport safe */ _segformer_image_processing_segformer_js__WEBPACK_IMPORTED_MODULE_34__.SegformerImageProcessor),
+/* harmony export */   SiglipImageProcessor: () => (/* reexport safe */ _siglip_image_processing_siglip_js__WEBPACK_IMPORTED_MODULE_35__.SiglipImageProcessor),
+/* harmony export */   SmolVLMImageProcessor: () => (/* reexport safe */ _smolvlm_image_processing_smolvlm_js__WEBPACK_IMPORTED_MODULE_36__.SmolVLMImageProcessor),
+/* harmony export */   Swin2SRImageProcessor: () => (/* reexport safe */ _swin2sr_image_processing_swin2sr_js__WEBPACK_IMPORTED_MODULE_37__.Swin2SRImageProcessor),
 /* harmony export */   VLMImageProcessor: () => (/* reexport safe */ _janus_image_processing_janus_js__WEBPACK_IMPORTED_MODULE_14__.VLMImageProcessor),
-/* harmony export */   ViTFeatureExtractor: () => (/* reexport safe */ _vit_image_processing_vit_js__WEBPACK_IMPORTED_MODULE_36__.ViTFeatureExtractor),
-/* harmony export */   ViTImageProcessor: () => (/* reexport safe */ _vit_image_processing_vit_js__WEBPACK_IMPORTED_MODULE_36__.ViTImageProcessor),
-/* harmony export */   VitMatteImageProcessor: () => (/* reexport safe */ _vitmatte_image_processing_vitmatte_js__WEBPACK_IMPORTED_MODULE_37__.VitMatteImageProcessor),
-/* harmony export */   VitPoseImageProcessor: () => (/* reexport safe */ _vitpose_image_processing_vitpose_js__WEBPACK_IMPORTED_MODULE_38__.VitPoseImageProcessor),
-/* harmony export */   YolosFeatureExtractor: () => (/* reexport safe */ _yolos_image_processing_yolos_js__WEBPACK_IMPORTED_MODULE_39__.YolosFeatureExtractor),
-/* harmony export */   YolosImageProcessor: () => (/* reexport safe */ _yolos_image_processing_yolos_js__WEBPACK_IMPORTED_MODULE_39__.YolosImageProcessor)
+/* harmony export */   ViTFeatureExtractor: () => (/* reexport safe */ _vit_image_processing_vit_js__WEBPACK_IMPORTED_MODULE_38__.ViTFeatureExtractor),
+/* harmony export */   ViTImageProcessor: () => (/* reexport safe */ _vit_image_processing_vit_js__WEBPACK_IMPORTED_MODULE_38__.ViTImageProcessor),
+/* harmony export */   VitMatteImageProcessor: () => (/* reexport safe */ _vitmatte_image_processing_vitmatte_js__WEBPACK_IMPORTED_MODULE_39__.VitMatteImageProcessor),
+/* harmony export */   VitPoseImageProcessor: () => (/* reexport safe */ _vitpose_image_processing_vitpose_js__WEBPACK_IMPORTED_MODULE_40__.VitPoseImageProcessor),
+/* harmony export */   YolosFeatureExtractor: () => (/* reexport safe */ _yolos_image_processing_yolos_js__WEBPACK_IMPORTED_MODULE_41__.YolosFeatureExtractor),
+/* harmony export */   YolosImageProcessor: () => (/* reexport safe */ _yolos_image_processing_yolos_js__WEBPACK_IMPORTED_MODULE_41__.YolosImageProcessor)
 /* harmony export */ });
 /* harmony import */ var _beit_image_processing_beit_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ./beit/image_processing_beit.js */ "./src/models/beit/image_processing_beit.js");
 /* harmony import */ var _bit_image_processing_bit_js__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! ./bit/image_processing_bit.js */ "./src/models/bit/image_processing_bit.js");
@@ -18023,14 +18186,18 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony import */ var _qwen2_vl_image_processing_qwen2_vl_js__WEBPACK_IMPORTED_MODULE_29__ = __webpack_require__(/*! ./qwen2_vl/image_processing_qwen2_vl.js */ "./src/models/qwen2_vl/image_processing_qwen2_vl.js");
 /* harmony import */ var _rt_detr_image_processing_rt_detr_js__WEBPACK_IMPORTED_MODULE_30__ = __webpack_require__(/*! ./rt_detr/image_processing_rt_detr.js */ "./src/models/rt_detr/image_processing_rt_detr.js");
 /* harmony import */ var _sam_image_processing_sam_js__WEBPACK_IMPORTED_MODULE_31__ = __webpack_require__(/*! ./sam/image_processing_sam.js */ "./src/models/sam/image_processing_sam.js");
-/* harmony import */ var _segformer_image_processing_segformer_js__WEBPACK_IMPORTED_MODULE_32__ = __webpack_require__(/*! ./segformer/image_processing_segformer.js */ "./src/models/segformer/image_processing_segformer.js");
-/* harmony import */ var _siglip_image_processing_siglip_js__WEBPACK_IMPORTED_MODULE_33__ = __webpack_require__(/*! ./siglip/image_processing_siglip.js */ "./src/models/siglip/image_processing_siglip.js");
-/* harmony import */ var _smolvlm_image_processing_smolvlm_js__WEBPACK_IMPORTED_MODULE_34__ = __webpack_require__(/*! ./smolvlm/image_processing_smolvlm.js */ "./src/models/smolvlm/image_processing_smolvlm.js");
-/* harmony import */ var _swin2sr_image_processing_swin2sr_js__WEBPACK_IMPORTED_MODULE_35__ = __webpack_require__(/*! ./swin2sr/image_processing_swin2sr.js */ "./src/models/swin2sr/image_processing_swin2sr.js");
-/* harmony import */ var _vit_image_processing_vit_js__WEBPACK_IMPORTED_MODULE_36__ = __webpack_require__(/*! ./vit/image_processing_vit.js */ "./src/models/vit/image_processing_vit.js");
-/* harmony import */ var _vitmatte_image_processing_vitmatte_js__WEBPACK_IMPORTED_MODULE_37__ = __webpack_require__(/*! ./vitmatte/image_processing_vitmatte.js */ "./src/models/vitmatte/image_processing_vitmatte.js");
-/* harmony import */ var _vitpose_image_processing_vitpose_js__WEBPACK_IMPORTED_MODULE_38__ = __webpack_require__(/*! ./vitpose/image_processing_vitpose.js */ "./src/models/vitpose/image_processing_vitpose.js");
-/* harmony import */ var _yolos_image_processing_yolos_js__WEBPACK_IMPORTED_MODULE_39__ = __webpack_require__(/*! ./yolos/image_processing_yolos.js */ "./src/models/yolos/image_processing_yolos.js");
+/* harmony import */ var _sam2_image_processing_sam2_js__WEBPACK_IMPORTED_MODULE_32__ = __webpack_require__(/*! ./sam2/image_processing_sam2.js */ "./src/models/sam2/image_processing_sam2.js");
+/* harmony import */ var _sam3_image_processing_sam3_js__WEBPACK_IMPORTED_MODULE_33__ = __webpack_require__(/*! ./sam3/image_processing_sam3.js */ "./src/models/sam3/image_processing_sam3.js");
+/* harmony import */ var _segformer_image_processing_segformer_js__WEBPACK_IMPORTED_MODULE_34__ = __webpack_require__(/*! ./segformer/image_processing_segformer.js */ "./src/models/segformer/image_processing_segformer.js");
+/* harmony import */ var _siglip_image_processing_siglip_js__WEBPACK_IMPORTED_MODULE_35__ = __webpack_require__(/*! ./siglip/image_processing_siglip.js */ "./src/models/siglip/image_processing_siglip.js");
+/* harmony import */ var _smolvlm_image_processing_smolvlm_js__WEBPACK_IMPORTED_MODULE_36__ = __webpack_require__(/*! ./smolvlm/image_processing_smolvlm.js */ "./src/models/smolvlm/image_processing_smolvlm.js");
+/* harmony import */ var _swin2sr_image_processing_swin2sr_js__WEBPACK_IMPORTED_MODULE_37__ = __webpack_require__(/*! ./swin2sr/image_processing_swin2sr.js */ "./src/models/swin2sr/image_processing_swin2sr.js");
+/* harmony import */ var _vit_image_processing_vit_js__WEBPACK_IMPORTED_MODULE_38__ = __webpack_require__(/*! ./vit/image_processing_vit.js */ "./src/models/vit/image_processing_vit.js");
+/* harmony import */ var _vitmatte_image_processing_vitmatte_js__WEBPACK_IMPORTED_MODULE_39__ = __webpack_require__(/*! ./vitmatte/image_processing_vitmatte.js */ "./src/models/vitmatte/image_processing_vitmatte.js");
+/* harmony import */ var _vitpose_image_processing_vitpose_js__WEBPACK_IMPORTED_MODULE_40__ = __webpack_require__(/*! ./vitpose/image_processing_vitpose.js */ "./src/models/vitpose/image_processing_vitpose.js");
+/* harmony import */ var _yolos_image_processing_yolos_js__WEBPACK_IMPORTED_MODULE_41__ = __webpack_require__(/*! ./yolos/image_processing_yolos.js */ "./src/models/yolos/image_processing_yolos.js");
+
+
 
 
 
@@ -19435,15 +19602,17 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */   Phi3VProcessor: () => (/* reexport safe */ _phi3_v_processing_phi3_v_js__WEBPACK_IMPORTED_MODULE_10__.Phi3VProcessor),
 /* harmony export */   PyAnnoteProcessor: () => (/* reexport safe */ _pyannote_processing_pyannote_js__WEBPACK_IMPORTED_MODULE_12__.PyAnnoteProcessor),
 /* harmony export */   Qwen2VLProcessor: () => (/* reexport safe */ _qwen2_vl_processing_qwen2_vl_js__WEBPACK_IMPORTED_MODULE_13__.Qwen2VLProcessor),
+/* harmony export */   Sam2Processor: () => (/* reexport safe */ _sam2_processing_sam2_js__WEBPACK_IMPORTED_MODULE_15__.Sam2Processor),
+/* harmony export */   Sam2VideoProcessor: () => (/* reexport safe */ _sam2_processing_sam2_js__WEBPACK_IMPORTED_MODULE_15__.Sam2VideoProcessor),
 /* harmony export */   SamProcessor: () => (/* reexport safe */ _sam_processing_sam_js__WEBPACK_IMPORTED_MODULE_14__.SamProcessor),
-/* harmony export */   SmolVLMProcessor: () => (/* reexport safe */ _smolvlm_processing_smolvlm_js__WEBPACK_IMPORTED_MODULE_15__.SmolVLMProcessor),
-/* harmony export */   SpeechT5Processor: () => (/* reexport safe */ _speecht5_processing_speecht5_js__WEBPACK_IMPORTED_MODULE_16__.SpeechT5Processor),
-/* harmony export */   UltravoxProcessor: () => (/* reexport safe */ _ultravox_processing_ultravox_js__WEBPACK_IMPORTED_MODULE_17__.UltravoxProcessor),
+/* harmony export */   SmolVLMProcessor: () => (/* reexport safe */ _smolvlm_processing_smolvlm_js__WEBPACK_IMPORTED_MODULE_16__.SmolVLMProcessor),
+/* harmony export */   SpeechT5Processor: () => (/* reexport safe */ _speecht5_processing_speecht5_js__WEBPACK_IMPORTED_MODULE_17__.SpeechT5Processor),
+/* harmony export */   UltravoxProcessor: () => (/* reexport safe */ _ultravox_processing_ultravox_js__WEBPACK_IMPORTED_MODULE_18__.UltravoxProcessor),
 /* harmony export */   VLChatProcessor: () => (/* reexport safe */ _janus_processing_janus_js__WEBPACK_IMPORTED_MODULE_4__.VLChatProcessor),
-/* harmony export */   VoxtralProcessor: () => (/* reexport safe */ _voxtral_processing_voxtral_js__WEBPACK_IMPORTED_MODULE_18__.VoxtralProcessor),
-/* harmony export */   Wav2Vec2Processor: () => (/* reexport safe */ _wav2vec2_processing_wav2vec2_js__WEBPACK_IMPORTED_MODULE_19__.Wav2Vec2Processor),
-/* harmony export */   Wav2Vec2ProcessorWithLM: () => (/* reexport safe */ _wav2vec2_with_lm_processing_wav2vec2_with_lm_js__WEBPACK_IMPORTED_MODULE_20__.Wav2Vec2ProcessorWithLM),
-/* harmony export */   WhisperProcessor: () => (/* reexport safe */ _whisper_processing_whisper_js__WEBPACK_IMPORTED_MODULE_21__.WhisperProcessor)
+/* harmony export */   VoxtralProcessor: () => (/* reexport safe */ _voxtral_processing_voxtral_js__WEBPACK_IMPORTED_MODULE_19__.VoxtralProcessor),
+/* harmony export */   Wav2Vec2Processor: () => (/* reexport safe */ _wav2vec2_processing_wav2vec2_js__WEBPACK_IMPORTED_MODULE_20__.Wav2Vec2Processor),
+/* harmony export */   Wav2Vec2ProcessorWithLM: () => (/* reexport safe */ _wav2vec2_with_lm_processing_wav2vec2_with_lm_js__WEBPACK_IMPORTED_MODULE_21__.Wav2Vec2ProcessorWithLM),
+/* harmony export */   WhisperProcessor: () => (/* reexport safe */ _whisper_processing_whisper_js__WEBPACK_IMPORTED_MODULE_22__.WhisperProcessor)
 /* harmony export */ });
 /* harmony import */ var _florence2_processing_florence2_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ./florence2/processing_florence2.js */ "./src/models/florence2/processing_florence2.js");
 /* harmony import */ var _gemma3n_processing_gemma3n_js__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! ./gemma3n/processing_gemma3n.js */ "./src/models/gemma3n/processing_gemma3n.js");
@@ -19460,13 +19629,15 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony import */ var _pyannote_processing_pyannote_js__WEBPACK_IMPORTED_MODULE_12__ = __webpack_require__(/*! ./pyannote/processing_pyannote.js */ "./src/models/pyannote/processing_pyannote.js");
 /* harmony import */ var _qwen2_vl_processing_qwen2_vl_js__WEBPACK_IMPORTED_MODULE_13__ = __webpack_require__(/*! ./qwen2_vl/processing_qwen2_vl.js */ "./src/models/qwen2_vl/processing_qwen2_vl.js");
 /* harmony import */ var _sam_processing_sam_js__WEBPACK_IMPORTED_MODULE_14__ = __webpack_require__(/*! ./sam/processing_sam.js */ "./src/models/sam/processing_sam.js");
-/* harmony import */ var _smolvlm_processing_smolvlm_js__WEBPACK_IMPORTED_MODULE_15__ = __webpack_require__(/*! ./smolvlm/processing_smolvlm.js */ "./src/models/smolvlm/processing_smolvlm.js");
-/* harmony import */ var _speecht5_processing_speecht5_js__WEBPACK_IMPORTED_MODULE_16__ = __webpack_require__(/*! ./speecht5/processing_speecht5.js */ "./src/models/speecht5/processing_speecht5.js");
-/* harmony import */ var _ultravox_processing_ultravox_js__WEBPACK_IMPORTED_MODULE_17__ = __webpack_require__(/*! ./ultravox/processing_ultravox.js */ "./src/models/ultravox/processing_ultravox.js");
-/* harmony import */ var _voxtral_processing_voxtral_js__WEBPACK_IMPORTED_MODULE_18__ = __webpack_require__(/*! ./voxtral/processing_voxtral.js */ "./src/models/voxtral/processing_voxtral.js");
-/* harmony import */ var _wav2vec2_processing_wav2vec2_js__WEBPACK_IMPORTED_MODULE_19__ = __webpack_require__(/*! ./wav2vec2/processing_wav2vec2.js */ "./src/models/wav2vec2/processing_wav2vec2.js");
-/* harmony import */ var _wav2vec2_with_lm_processing_wav2vec2_with_lm_js__WEBPACK_IMPORTED_MODULE_20__ = __webpack_require__(/*! ./wav2vec2_with_lm/processing_wav2vec2_with_lm.js */ "./src/models/wav2vec2_with_lm/processing_wav2vec2_with_lm.js");
-/* harmony import */ var _whisper_processing_whisper_js__WEBPACK_IMPORTED_MODULE_21__ = __webpack_require__(/*! ./whisper/processing_whisper.js */ "./src/models/whisper/processing_whisper.js");
+/* harmony import */ var _sam2_processing_sam2_js__WEBPACK_IMPORTED_MODULE_15__ = __webpack_require__(/*! ./sam2/processing_sam2.js */ "./src/models/sam2/processing_sam2.js");
+/* harmony import */ var _smolvlm_processing_smolvlm_js__WEBPACK_IMPORTED_MODULE_16__ = __webpack_require__(/*! ./smolvlm/processing_smolvlm.js */ "./src/models/smolvlm/processing_smolvlm.js");
+/* harmony import */ var _speecht5_processing_speecht5_js__WEBPACK_IMPORTED_MODULE_17__ = __webpack_require__(/*! ./speecht5/processing_speecht5.js */ "./src/models/speecht5/processing_speecht5.js");
+/* harmony import */ var _ultravox_processing_ultravox_js__WEBPACK_IMPORTED_MODULE_18__ = __webpack_require__(/*! ./ultravox/processing_ultravox.js */ "./src/models/ultravox/processing_ultravox.js");
+/* harmony import */ var _voxtral_processing_voxtral_js__WEBPACK_IMPORTED_MODULE_19__ = __webpack_require__(/*! ./voxtral/processing_voxtral.js */ "./src/models/voxtral/processing_voxtral.js");
+/* harmony import */ var _wav2vec2_processing_wav2vec2_js__WEBPACK_IMPORTED_MODULE_20__ = __webpack_require__(/*! ./wav2vec2/processing_wav2vec2.js */ "./src/models/wav2vec2/processing_wav2vec2.js");
+/* harmony import */ var _wav2vec2_with_lm_processing_wav2vec2_with_lm_js__WEBPACK_IMPORTED_MODULE_21__ = __webpack_require__(/*! ./wav2vec2_with_lm/processing_wav2vec2_with_lm.js */ "./src/models/wav2vec2_with_lm/processing_wav2vec2_with_lm.js");
+/* harmony import */ var _whisper_processing_whisper_js__WEBPACK_IMPORTED_MODULE_22__ = __webpack_require__(/*! ./whisper/processing_whisper.js */ "./src/models/whisper/processing_whisper.js");
+
 
 
 
@@ -19814,6 +19985,60 @@ class RTDetrImageProcessor extends _base_image_processors_utils_js__WEBPACK_IMPO
 
 /***/ }),
 
+/***/ "./src/models/sam2/image_processing_sam2.js":
+/*!**************************************************!*\
+  !*** ./src/models/sam2/image_processing_sam2.js ***!
+  \**************************************************/
+/***/ ((__unused_webpack___webpack_module__, __webpack_exports__, __webpack_require__) => {
+
+__webpack_require__.r(__webpack_exports__);
+/* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   Sam2ImageProcessor: () => (/* reexport safe */ _sam_image_processing_sam_js__WEBPACK_IMPORTED_MODULE_0__.SamImageProcessor)
+/* harmony export */ });
+/* harmony import */ var _sam_image_processing_sam_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ../sam/image_processing_sam.js */ "./src/models/sam/image_processing_sam.js");
+
+
+
+
+/***/ }),
+
+/***/ "./src/models/sam2/processing_sam2.js":
+/*!********************************************!*\
+  !*** ./src/models/sam2/processing_sam2.js ***!
+  \********************************************/
+/***/ ((__unused_webpack___webpack_module__, __webpack_exports__, __webpack_require__) => {
+
+__webpack_require__.r(__webpack_exports__);
+/* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   Sam2Processor: () => (/* binding */ Sam2Processor),
+/* harmony export */   Sam2VideoProcessor: () => (/* binding */ Sam2VideoProcessor)
+/* harmony export */ });
+/* harmony import */ var _sam_processing_sam_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ../sam/processing_sam.js */ "./src/models/sam/processing_sam.js");
+
+
+class Sam2Processor extends _sam_processing_sam_js__WEBPACK_IMPORTED_MODULE_0__.SamProcessor { }
+class Sam2VideoProcessor extends Sam2Processor { }
+
+
+/***/ }),
+
+/***/ "./src/models/sam3/image_processing_sam3.js":
+/*!**************************************************!*\
+  !*** ./src/models/sam3/image_processing_sam3.js ***!
+  \**************************************************/
+/***/ ((__unused_webpack___webpack_module__, __webpack_exports__, __webpack_require__) => {
+
+__webpack_require__.r(__webpack_exports__);
+/* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   Sam3ImageProcessor: () => (/* reexport safe */ _sam2_image_processing_sam2_js__WEBPACK_IMPORTED_MODULE_0__.Sam2ImageProcessor)
+/* harmony export */ });
+/* harmony import */ var _sam2_image_processing_sam2_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ../sam2/image_processing_sam2.js */ "./src/models/sam2/image_processing_sam2.js");
+
+
+
+
+/***/ }),
+
 /***/ "./src/models/sam/image_processing_sam.js":
 /*!************************************************!*\
   !*** ./src/models/sam/image_processing_sam.js ***!
@@ -19871,12 +20096,12 @@ class SamImageProcessor extends _base_image_processors_utils_js__WEBPACK_IMPORTE
 
         // Reshape input points
         for (let i = 0; i < input_points.length; ++i) { // batch_size
-            let originalImageSize = original_sizes[i];
-            let reshapedImageSize = reshaped_input_sizes[i];
+            const [originalHeight, originalWidth] = original_sizes[i];
+            const [reshapedHeight, reshapedWidth] = reshaped_input_sizes[i];
 
-            let resizeFactors = [
-                reshapedImageSize[0] / originalImageSize[0],
-                reshapedImageSize[1] / originalImageSize[1]
+            const resizeFactors = [
+                reshapedWidth / originalWidth,
+                reshapedHeight / originalHeight,
             ]
 
             for (let j = 0; j < input_points[i].length; ++j) { // point_batch_size
@@ -19994,7 +20219,7 @@ class SamImageProcessor extends _base_image_processors_utils_js__WEBPACK_IMPORTE
 
         const output_masks = [];
 
-        pad_size = pad_size ?? this.pad_size;
+        pad_size = pad_size ?? this.pad_size ?? this.size;
 
         /** @type {[number, number]} */
         const target_image_size = [pad_size.height, pad_size.width];
@@ -21749,6 +21974,7 @@ __webpack_require__.r(__webpack_exports__);
 
 
 
+
 /**
  * @typedef {string | RawImage | URL | Blob | HTMLCanvasElement | OffscreenCanvas} ImageInput
  * @typedef {ImageInput|ImageInput[]} ImagePipelineInputs
@@ -21761,12 +21987,12 @@ __webpack_require__.r(__webpack_exports__);
  * @private
  */
 async function prepareImages(images) {
-  if (!Array.isArray(images)) {
-    images = [images];
-  }
+    if (!Array.isArray(images)) {
+        images = [images];
+    }
 
-  // Possibly convert any non-images to images
-  return await Promise.all(images.map((x) => _utils_image_js__WEBPACK_IMPORTED_MODULE_9__.RawImage.read(x)));
+    // Possibly convert any non-images to images
+    return await Promise.all(images.map(x => _utils_image_js__WEBPACK_IMPORTED_MODULE_9__.RawImage.read(x)));
 }
 
 /**
@@ -21782,20 +22008,18 @@ async function prepareImages(images) {
  * @private
  */
 async function prepareAudios(audios, sampling_rate) {
-  if (!Array.isArray(audios)) {
-    audios = [audios];
-  }
+    if (!Array.isArray(audios)) {
+        audios = [audios];
+    }
 
-  return await Promise.all(
-    audios.map((x) => {
-      if (typeof x === "string" || x instanceof URL) {
-        return (0,_utils_audio_js__WEBPACK_IMPORTED_MODULE_7__.read_audio)(x, sampling_rate);
-      } else if (x instanceof Float64Array) {
-        return new Float32Array(x);
-      }
-      return x;
-    }),
-  );
+    return await Promise.all(audios.map(x => {
+        if (typeof x === 'string' || x instanceof URL) {
+            return (0,_utils_audio_js__WEBPACK_IMPORTED_MODULE_7__.read_audio)(x, sampling_rate);
+        } else if (x instanceof Float64Array) {
+            return new Float32Array(x);
+        }
+        return x;
+    }));
 }
 
 /**
@@ -21814,13 +22038,14 @@ async function prepareAudios(audios, sampling_rate) {
  * @private
  */
 function get_bounding_box(box, asInteger) {
-  if (asInteger) {
-    box = box.map((x) => x | 0);
-  }
-  const [xmin, ymin, xmax, ymax] = box;
+    if (asInteger) {
+        box = box.map(x => x | 0);
+    }
+    const [xmin, ymin, xmax, ymax] = box;
 
-  return { xmin, ymin, xmax, ymax };
+    return { xmin, ymin, xmax, ymax };
 }
+
 
 /**
  * @callback DisposeType Disposes the item.
@@ -21835,26 +22060,26 @@ function get_bounding_box(box, asInteger) {
  * Refer to this class for methods shared across different pipelines.
  */
 class Pipeline extends _utils_generic_js__WEBPACK_IMPORTED_MODULE_4__.Callable {
-  /**
-   * Create a new Pipeline.
-   * @param {Object} options An object containing the following properties:
-   * @param {string} [options.task] The task of the pipeline. Useful for specifying subtasks.
-   * @param {PreTrainedModel} [options.model] The model used by the pipeline.
-   * @param {PreTrainedTokenizer} [options.tokenizer=null] The tokenizer used by the pipeline (if any).
-   * @param {Processor} [options.processor=null] The processor used by the pipeline (if any).
-   */
-  constructor({ task, model, tokenizer = null, processor = null }) {
-    super();
-    this.task = task;
-    this.model = model;
-    this.tokenizer = tokenizer;
-    this.processor = processor;
-  }
+    /**
+     * Create a new Pipeline.
+     * @param {Object} options An object containing the following properties:
+     * @param {string} [options.task] The task of the pipeline. Useful for specifying subtasks.
+     * @param {PreTrainedModel} [options.model] The model used by the pipeline.
+     * @param {PreTrainedTokenizer} [options.tokenizer=null] The tokenizer used by the pipeline (if any).
+     * @param {Processor} [options.processor=null] The processor used by the pipeline (if any).
+     */
+    constructor({ task, model, tokenizer = null, processor = null }) {
+        super();
+        this.task = task;
+        this.model = model;
+        this.tokenizer = tokenizer;
+        this.processor = processor;
+    }
 
-  /** @type {DisposeType} */
-  async dispose() {
-    await this.model.dispose();
-  }
+    /** @type {DisposeType} */
+    async dispose() {
+        await this.model.dispose();
+    }
 }
 
 /**
@@ -21875,6 +22100,7 @@ class Pipeline extends _utils_generic_js__WEBPACK_IMPORTED_MODULE_4__.Callable {
  * @typedef {ModelProcessorConstructorArgs} AudioPipelineConstructorArgs An object used to instantiate an audio-based pipeline.
  * @typedef {ModelProcessorConstructorArgs} ImagePipelineConstructorArgs An object used to instantiate an image-based pipeline.
  */
+
 
 /**
  * @typedef {Object} ModelTokenizerProcessorConstructorArgs
@@ -21941,63 +22167,65 @@ class Pipeline extends _utils_generic_js__WEBPACK_IMPORTED_MODULE_4__.Callable {
  * // ]
  * ```
  */
-class TextClassificationPipeline
-  extends /** @type {new (options: TextPipelineConstructorArgs) => TextClassificationPipelineType} */ (
-    Pipeline
-  )
-{
-  /**
-   * Create a new TextClassificationPipeline.
-   * @param {TextPipelineConstructorArgs} options An object used to instantiate the pipeline.
-   */
-  constructor(options) {
-    super(options);
-  }
+class TextClassificationPipeline extends (/** @type {new (options: TextPipelineConstructorArgs) => TextClassificationPipelineType} */ (Pipeline)) {
 
-  /** @type {TextClassificationPipelineCallback} */
-  async _call(texts, { top_k = 1 } = {}) {
-    // Run tokenization
-    const model_inputs = this.tokenizer(texts, {
-      padding: true,
-      truncation: true,
-    });
-
-    // Run model
-    const outputs = await this.model(model_inputs);
-
-    // TODO: Use softmax tensor function
-    const function_to_apply =
-      // @ts-expect-error TS2339
-      this.model.config.problem_type === "multi_label_classification"
-        ? (batch) => batch.sigmoid()
-        : (batch) => new _utils_tensor_js__WEBPACK_IMPORTED_MODULE_8__.Tensor("float32", (0,_utils_maths_js__WEBPACK_IMPORTED_MODULE_6__.softmax)(batch.data), batch.dims); // single_label_classification (default)
-
-    // @ts-expect-error TS2339
-    const id2label = this.model.config.id2label;
-
-    const toReturn = [];
-    for (const batch of outputs.logits) {
-      const output = function_to_apply(batch);
-
-      const scores = await (0,_utils_tensor_js__WEBPACK_IMPORTED_MODULE_8__.topk)(output, top_k);
-
-      const values = scores[0].tolist();
-      const indices = scores[1].tolist();
-      const vals = indices.map((x, i) => ({
-        label: id2label ? id2label[x] : `LABEL_${x}`,
-        score: values[i],
-      }));
-      if (top_k === 1) {
-        toReturn.push(...vals);
-      } else {
-        toReturn.push(vals);
-      }
+    /**
+     * Create a new TextClassificationPipeline.
+     * @param {TextPipelineConstructorArgs} options An object used to instantiate the pipeline.
+     */
+    constructor(options) {
+        super(options);
     }
 
-    return Array.isArray(texts) || top_k === 1
-      ? /** @type {TextClassificationOutput} */ (toReturn)
-      : /** @type {TextClassificationOutput[]} */ (toReturn)[0];
-  }
+    /** @type {TextClassificationPipelineCallback} */
+    async _call(texts, {
+        top_k = 1
+    } = {}) {
+
+        // Run tokenization
+        const model_inputs = this.tokenizer(texts, {
+            padding: true,
+            truncation: true,
+        });
+
+        // Run model
+        const outputs = await this.model(model_inputs)
+
+        // TODO: Use softmax tensor function
+        const function_to_apply =
+            // @ts-expect-error TS2339
+            this.model.config.problem_type === 'multi_label_classification'
+                ? batch => batch.sigmoid()
+                : batch => new _utils_tensor_js__WEBPACK_IMPORTED_MODULE_8__.Tensor(
+                    'float32',
+                    (0,_utils_maths_js__WEBPACK_IMPORTED_MODULE_6__.softmax)(batch.data),
+                    batch.dims,
+                ); // single_label_classification (default)
+
+        // @ts-expect-error TS2339
+        const id2label = this.model.config.id2label;
+
+        const toReturn = [];
+        for (const batch of outputs.logits) {
+            const output = function_to_apply(batch);
+
+            const scores = await (0,_utils_tensor_js__WEBPACK_IMPORTED_MODULE_8__.topk)(output, top_k);
+
+            const values = scores[0].tolist();
+            const indices = scores[1].tolist();
+            const vals = indices.map((x, i) => ({
+                label: id2label ? id2label[x] : `LABEL_${x}`,
+                score: values[i],
+            }));
+            if (top_k === 1) {
+                toReturn.push(...vals);
+            } else {
+                toReturn.push(vals);
+            }
+        }
+
+        return Array.isArray(texts) || top_k === 1 ? /** @type {TextClassificationOutput} */ (toReturn) : /** @type {TextClassificationOutput[]} */ (toReturn)[0];
+    }
 }
 
 /**
@@ -22050,81 +22278,77 @@ class TextClassificationPipeline
  * // ]
  * ```
  */
-class TokenClassificationPipeline
-  extends /** @type {new (options: TextPipelineConstructorArgs) => TokenClassificationPipelineType} */ (
-    Pipeline
-  )
-{
-  /**
-   * Create a new TokenClassificationPipeline.
-   * @param {TextPipelineConstructorArgs} options An object used to instantiate the pipeline.
-   */
-  constructor(options) {
-    super(options);
-  }
+class TokenClassificationPipeline extends (/** @type {new (options: TextPipelineConstructorArgs) => TokenClassificationPipelineType} */ (Pipeline)) {
 
-  /** @type {TokenClassificationPipelineCallback} */
-  async _call(texts, { ignore_labels = ["O"] } = {}) {
-    const isBatched = Array.isArray(texts);
-
-    // Run tokenization
-    const model_inputs = this.tokenizer(isBatched ? texts : [texts], {
-      padding: true,
-      truncation: true,
-    });
-
-    // Run model
-    const outputs = await this.model(model_inputs);
-
-    const logits = outputs.logits;
-    // @ts-expect-error TS2339
-    const id2label = this.model.config.id2label;
-
-    const toReturn = [];
-    for (let i = 0; i < logits.dims[0]; ++i) {
-      const ids = model_inputs.input_ids[i];
-      const batch = logits[i];
-
-      // List of tokens that aren't ignored
-      const tokens = [];
-      for (let j = 0; j < batch.dims[0]; ++j) {
-        const tokenData = batch[j];
-        const topScoreIndex = (0,_utils_maths_js__WEBPACK_IMPORTED_MODULE_6__.max)(tokenData.data)[1];
-
-        const entity = id2label
-          ? id2label[topScoreIndex]
-          : `LABEL_${topScoreIndex}`;
-        if (ignore_labels.includes(entity)) {
-          // We predicted a token that should be ignored. So, we skip it.
-          continue;
-        }
-
-        // TODO add option to keep special tokens?
-        const word = this.tokenizer.decode([ids[j].item()], {
-          skip_special_tokens: true,
-        });
-        if (word === "") {
-          // Was a special token. So, we skip it.
-          continue;
-        }
-
-        const scores = (0,_utils_maths_js__WEBPACK_IMPORTED_MODULE_6__.softmax)(tokenData.data);
-
-        tokens.push({
-          entity: entity,
-          score: scores[topScoreIndex],
-          index: j,
-          word: word,
-
-          // TODO: Add support for start and end
-          // start: null,
-          // end: null,
-        });
-      }
-      toReturn.push(tokens);
+    /**
+     * Create a new TokenClassificationPipeline.
+     * @param {TextPipelineConstructorArgs} options An object used to instantiate the pipeline.
+     */
+    constructor(options) {
+        super(options);
     }
-    return isBatched ? toReturn : toReturn[0];
-  }
+
+    /** @type {TokenClassificationPipelineCallback} */
+    async _call(texts, {
+        ignore_labels = ['O'],
+    } = {}) {
+
+        const isBatched = Array.isArray(texts);
+
+        // Run tokenization
+        const model_inputs = this.tokenizer(isBatched ? texts : [texts], {
+            padding: true,
+            truncation: true,
+        });
+
+        // Run model
+        const outputs = await this.model(model_inputs)
+
+        const logits = outputs.logits;
+        // @ts-expect-error TS2339
+        const id2label = this.model.config.id2label;
+
+        const toReturn = [];
+        for (let i = 0; i < logits.dims[0]; ++i) {
+            const ids = model_inputs.input_ids[i];
+            const batch = logits[i];
+
+            // List of tokens that aren't ignored
+            const tokens = [];
+            for (let j = 0; j < batch.dims[0]; ++j) {
+                const tokenData = batch[j];
+                const topScoreIndex = (0,_utils_maths_js__WEBPACK_IMPORTED_MODULE_6__.max)(tokenData.data)[1];
+
+                const entity = id2label ? id2label[topScoreIndex] : `LABEL_${topScoreIndex}`;
+                if (ignore_labels.includes(entity)) {
+                    // We predicted a token that should be ignored. So, we skip it.
+                    continue;
+                }
+
+                // TODO add option to keep special tokens?
+                const word = this.tokenizer.decode([ids[j].item()], { skip_special_tokens: true });
+                if (word === '') {
+                    // Was a special token. So, we skip it.
+                    continue;
+                }
+
+                const scores = (0,_utils_maths_js__WEBPACK_IMPORTED_MODULE_6__.softmax)(tokenData.data);
+
+                tokens.push({
+                    entity: entity,
+                    score: scores[topScoreIndex],
+                    index: j,
+                    word: word,
+
+                    // TODO: Add support for start and end
+                    // start: null,
+                    // end: null,
+                });
+            }
+            toReturn.push(tokens);
+        }
+        return isBatched ? toReturn : toReturn[0];
+    }
 }
 
 /**
@@ -22161,107 +22385,110 @@ class TokenClassificationPipeline
  * // }
  * ```
  */
-class QuestionAnsweringPipeline
-  extends /** @type {new (options: TextPipelineConstructorArgs) => QuestionAnsweringPipelineType} */ (
-    Pipeline
-  )
-{
-  /**
-   * Create a new QuestionAnsweringPipeline.
-   * @param {TextPipelineConstructorArgs} options An object used to instantiate the pipeline.
-   */
-  constructor(options) {
-    super(options);
-  }
+class QuestionAnsweringPipeline extends (/** @type {new (options: TextPipelineConstructorArgs) => QuestionAnsweringPipelineType} */ (Pipeline)) {
 
-  /** @type {QuestionAnsweringPipelineCallback} */
-  async _call(question, context, { top_k = 1 } = {}) {
-    // Run tokenization
-    const inputs = this.tokenizer(question, {
-      text_pair: context,
-      padding: true,
-      truncation: true,
-    });
-
-    const { start_logits, end_logits } = await this.model(inputs);
-    const input_ids = inputs.input_ids.tolist();
-    const attention_mask = inputs.attention_mask.tolist();
-
-    // TODO: add support for `return_special_tokens_mask`
-    const special_tokens = this.tokenizer.all_special_ids;
-
-    /** @type {QuestionAnsweringOutput[]} */
-    const toReturn = [];
-    for (let j = 0; j < start_logits.dims[0]; ++j) {
-      const ids = input_ids[j];
-      const sepIndex = ids.findIndex(
-        (x) =>
-          // We use == to match bigint with number
-          // @ts-ignore
-          x == this.tokenizer.sep_token_id,
-      );
-
-      const valid_mask = attention_mask[j].map(
-        (y, ix) =>
-          y == 1 &&
-          (ix === 0 || // is cls_token
-            (ix > sepIndex &&
-              special_tokens.findIndex((x) => x == ids[ix]) === -1)), // token is not a special token (special_tokens_mask == 0)
-      );
-
-      const start = start_logits[j].tolist();
-      const end = end_logits[j].tolist();
-
-      // Now, we mask out values that can't be in the answer
-      // NOTE: We keep the cls_token unmasked (some models use it to indicate unanswerable questions)
-      for (let i = 1; i < start.length; ++i) {
-        if (
-          attention_mask[j] == 0 || // is part of padding
-          i <= sepIndex || // is before the sep_token
-          special_tokens.findIndex((x) => x == ids[i]) !== -1 // Is a special token
-        ) {
-          // Make sure non-context indexes in the tensor cannot contribute to the softmax
-          start[i] = -Infinity;
-          end[i] = -Infinity;
-        }
-      }
-
-      // Normalize logits and spans to retrieve the answer
-      const start_scores = (0,_utils_maths_js__WEBPACK_IMPORTED_MODULE_6__.softmax)(start).map((x, i) => [x, i]);
-      const end_scores = (0,_utils_maths_js__WEBPACK_IMPORTED_MODULE_6__.softmax)(end).map((x, i) => [x, i]);
-
-      // Mask CLS
-      start_scores[0][0] = 0;
-      end_scores[0][0] = 0;
-
-      // Generate all valid spans and select best ones
-      const options = (0,_utils_core_js__WEBPACK_IMPORTED_MODULE_5__.product)(start_scores, end_scores)
-        .filter((x) => x[0][1] <= x[1][1])
-        .map((x) => [x[0][1], x[1][1], x[0][0] * x[1][0]])
-        .sort((a, b) => b[2] - a[2]);
-
-      for (let k = 0; k < Math.min(options.length, top_k); ++k) {
-        const [start, end, score] = options[k];
-
-        const answer_tokens = ids.slice(start, end + 1);
-
-        const answer = this.tokenizer.decode(answer_tokens, {
-          skip_special_tokens: true,
-        });
-
-        // TODO add start and end?
-        // NOTE: HF returns character index
-        toReturn.push({
-          answer,
-          score,
-        });
-      }
+    /**
+     * Create a new QuestionAnsweringPipeline.
+     * @param {TextPipelineConstructorArgs} options An object used to instantiate the pipeline.
+     */
+    constructor(options) {
+        super(options);
     }
 
-    // Mimic HF's return type based on top_k
-    return top_k === 1 ? toReturn[0] : toReturn;
-  }
+    /** @type {QuestionAnsweringPipelineCallback} */
+    async _call(question, context, {
+        top_k = 1
+    } = {}) {
+
+        // Run tokenization
+        const inputs = this.tokenizer(question, {
+            text_pair: context,
+            padding: true,
+            truncation: true,
+        });
+
+        const { start_logits, end_logits } = await this.model(inputs);
+        const input_ids = inputs.input_ids.tolist();
+        const attention_mask = inputs.attention_mask.tolist();
+
+        // TODO: add support for `return_special_tokens_mask`
+        const special_tokens = this.tokenizer.all_special_ids;
+
+        /** @type {QuestionAnsweringOutput[]} */
+        const toReturn = [];
+        for (let j = 0; j < start_logits.dims[0]; ++j) {
+            const ids = input_ids[j];
+            const sepIndex = ids.findIndex(x =>
+                // We use == to match bigint with number
+                // @ts-ignore
+                x == this.tokenizer.sep_token_id
+            );
+
+
+            const valid_mask = attention_mask[j].map((y, ix) => (
+                y == 1
+                && (
+                    ix === 0 // is cls_token
+                    || (
+                        ix > sepIndex
+                        && special_tokens.findIndex(x => x == ids[ix]) === -1 // token is not a special token (special_tokens_mask == 0)
+                    )
+                )
+            ));
+
+            const start = start_logits[j].tolist();
+            const end = end_logits[j].tolist();
+
+            // Now, we mask out values that can't be in the answer
+            // NOTE: We keep the cls_token unmasked (some models use it to indicate unanswerable questions)
+            for (let i = 1; i < start.length; ++i) {
+                if (
+                    attention_mask[j] == 0 // is part of padding
+                    || i <= sepIndex // is before the sep_token
+                    || special_tokens.findIndex(x => x == ids[i]) !== -1 // Is a special token
+                ) {
+                    // Make sure non-context indexes in the tensor cannot contribute to the softmax
+                    start[i] = -Infinity;
+                    end[i] = -Infinity;
+                }
+            }
+
+            // Normalize logits and spans to retrieve the answer
+            const start_scores = (0,_utils_maths_js__WEBPACK_IMPORTED_MODULE_6__.softmax)(start).map((x, i) => [x, i]);
+            const end_scores = (0,_utils_maths_js__WEBPACK_IMPORTED_MODULE_6__.softmax)(end).map((x, i) => [x, i]);
+
+            // Mask CLS
+            start_scores[0][0] = 0;
+            end_scores[0][0] = 0;
+
+            // Generate all valid spans and select best ones
+            const options = (0,_utils_core_js__WEBPACK_IMPORTED_MODULE_5__.product)(start_scores, end_scores)
+                .filter(x => x[0][1] <= x[1][1])
+                .map(x => [x[0][1], x[1][1], x[0][0] * x[1][0]])
+                .sort((a, b) => b[2] - a[2]);
+
+            for (let k = 0; k < Math.min(options.length, top_k); ++k) {
+                const [start, end, score] = options[k];
+
+                const answer_tokens = ids.slice(start, end + 1)
+
+                const answer = this.tokenizer.decode(answer_tokens, {
+                    skip_special_tokens: true,
+                });
+
+                // TODO add start and end?
+                // NOTE: HF returns character index
+                toReturn.push({
+                    answer, score
+                });
+            }
+        }
+
+        // Mimic HF's return type based on top_k
+        return (top_k === 1) ? toReturn[0] : toReturn;
+    }
 }
+
 
 /**
  * @typedef {Object} FillMaskSingle
@@ -22308,75 +22535,70 @@ class QuestionAnsweringPipeline
  * // [{ token_str: 'spiral', score: 0.6299987435340881, token: 14061, sequence: 'The Milky Way is a spiral galaxy.' }]
  * ```
  */
-class FillMaskPipeline
-  extends /** @type {new (options: TextPipelineConstructorArgs) => FillMaskPipelineType} */ (
-    Pipeline
-  )
-{
-  /**
-   * Create a new FillMaskPipeline.
-   * @param {TextPipelineConstructorArgs} options An object used to instantiate the pipeline.
-   */
-  constructor(options) {
-    super(options);
-  }
+class FillMaskPipeline extends (/** @type {new (options: TextPipelineConstructorArgs) => FillMaskPipelineType} */ (Pipeline)) {
 
-  /** @type {FillMaskPipelineCallback} */
-  async _call(texts, { top_k = 5 } = {}) {
-    // Run tokenization
-    const model_inputs = this.tokenizer(texts, {
-      padding: true,
-      truncation: true,
-    });
-
-    // Run model
-    const { logits } = await this.model(model_inputs);
-
-    const toReturn = [];
-
-    /** @type {bigint[][]} */
-    const input_ids = model_inputs.input_ids.tolist();
-    for (let i = 0; i < input_ids.length; ++i) {
-      const ids = input_ids[i];
-      const mask_token_index = ids.findIndex(
-        (x) =>
-          // We use == to match bigint with number
-          // @ts-ignore
-          x == this.tokenizer.mask_token_id,
-      );
-      if (mask_token_index === -1) {
-        throw Error(
-          `Mask token (${this.tokenizer.mask_token}) not found in text.`,
-        );
-      }
-      const itemLogits = logits[i][mask_token_index];
-
-      const scores = await (0,_utils_tensor_js__WEBPACK_IMPORTED_MODULE_8__.topk)(
-        new _utils_tensor_js__WEBPACK_IMPORTED_MODULE_8__.Tensor("float32", (0,_utils_maths_js__WEBPACK_IMPORTED_MODULE_6__.softmax)(itemLogits.data), itemLogits.dims),
-        top_k,
-      );
-      const values = scores[0].tolist();
-      const indices = scores[1].tolist();
-
-      toReturn.push(
-        indices.map((x, i) => {
-          const sequence = ids.slice();
-          sequence[mask_token_index] = x;
-
-          return {
-            score: values[i],
-            token: Number(x),
-            token_str: this.tokenizer.decode([x]),
-            sequence: this.tokenizer.decode(sequence, {
-              skip_special_tokens: true,
-            }),
-          };
-        }),
-      );
+    /**
+     * Create a new FillMaskPipeline.
+     * @param {TextPipelineConstructorArgs} options An object used to instantiate the pipeline.
+     */
+    constructor(options) {
+        super(options);
     }
-    return Array.isArray(texts) ? toReturn : toReturn[0];
-  }
+
+    /** @type {FillMaskPipelineCallback} */
+    async _call(texts, {
+        top_k = 5
+    } = {}) {
+
+        // Run tokenization
+        const model_inputs = this.tokenizer(texts, {
+            padding: true,
+            truncation: true,
+        });
+
+        // Run model
+        const { logits } = await this.model(model_inputs)
+
+        const toReturn = [];
+
+        /** @type {bigint[][]} */
+        const input_ids = model_inputs.input_ids.tolist();
+        for (let i = 0; i < input_ids.length; ++i) {
+            const ids = input_ids[i];
+            const mask_token_index = ids.findIndex(x =>
+                // We use == to match bigint with number
+                // @ts-ignore
+                x == this.tokenizer.mask_token_id
+            );
+            if (mask_token_index === -1) {
+                throw Error(`Mask token (${this.tokenizer.mask_token}) not found in text.`)
+            }
+            const itemLogits = logits[i][mask_token_index];
+
+            const scores = await (0,_utils_tensor_js__WEBPACK_IMPORTED_MODULE_8__.topk)(new _utils_tensor_js__WEBPACK_IMPORTED_MODULE_8__.Tensor(
+                'float32',
+                (0,_utils_maths_js__WEBPACK_IMPORTED_MODULE_6__.softmax)(itemLogits.data),
+                itemLogits.dims,
+            ), top_k);
+            const values = scores[0].tolist();
+            const indices = scores[1].tolist();
+
+            toReturn.push(indices.map((x, i) => {
+                const sequence = ids.slice();
+                sequence[mask_token_index] = x;
+
+                return {
+                    score: values[i],
+                    token: Number(x),
+                    token_str: this.tokenizer.decode([x]),
+                    sequence: this.tokenizer.decode(sequence, { skip_special_tokens: true }),
+                }
+            }));
+        }
+        return Array.isArray(texts) ? toReturn : toReturn[0];
+    }
 }
+
 
 /**
  * @typedef {Object} Text2TextGenerationSingle
@@ -22403,80 +22625,67 @@ class FillMaskPipeline
  * // [{ generated_text: "To become more healthy, you can: 1. Eat a balanced diet with plenty of fruits, vegetables, whole grains, lean proteins, and healthy fats. 2. Stay hydrated by drinking plenty of water. 3. Get enough sleep and manage stress levels. 4. Avoid smoking and excessive alcohol consumption. 5. Regularly exercise and maintain a healthy weight. 6. Practice good hygiene and sanitation. 7. Seek medical attention if you experience any health issues." }]
  * ```
  */
-class Text2TextGenerationPipeline
-  extends /** @type {new (options: TextPipelineConstructorArgs) => Text2TextGenerationPipelineType} */ (
-    Pipeline
-  )
-{
-  /** @type {'generated_text'} */
-  _key = "generated_text";
+class Text2TextGenerationPipeline extends (/** @type {new (options: TextPipelineConstructorArgs) => Text2TextGenerationPipelineType} */ (Pipeline)) {
+    /** @type {'generated_text'} */
+    _key = 'generated_text';
 
-  /**
-   * Create a new Text2TextGenerationPipeline.
-   * @param {TextPipelineConstructorArgs} options An object used to instantiate the pipeline.
-   */
-  constructor(options) {
-    super(options);
-  }
-
-  /** @type {Text2TextGenerationPipelineCallback} */
-  async _call(texts, generate_kwargs = {}) {
-    if (!Array.isArray(texts)) {
-      texts = [texts];
+    /**
+     * Create a new Text2TextGenerationPipeline.
+     * @param {TextPipelineConstructorArgs} options An object used to instantiate the pipeline.
+     */
+    constructor(options) {
+        super(options);
     }
 
-    // Add global prefix, if present
-    // @ts-expect-error TS2339
-    if (this.model.config.prefix) {
-      // @ts-expect-error TS2339
-      texts = texts.map((x) => this.model.config.prefix + x);
+    /** @type {Text2TextGenerationPipelineCallback} */
+    async _call(texts, generate_kwargs = {}) {
+        if (!Array.isArray(texts)) {
+            texts = [texts];
+        }
+
+
+        // Add global prefix, if present
+        // @ts-expect-error TS2339
+        if (this.model.config.prefix) {
+            // @ts-expect-error TS2339
+            texts = texts.map(x => this.model.config.prefix + x)
+        }
+
+        // Handle task specific params:
+        // @ts-expect-error TS2339
+        const task_specific_params = this.model.config.task_specific_params
+        if (task_specific_params && task_specific_params[this.task]) {
+            // Add prefixes, if present
+            if (task_specific_params[this.task].prefix) {
+                texts = texts.map(x => task_specific_params[this.task].prefix + x)
+            }
+
+            // TODO update generation config
+        }
+
+        const tokenizer = this.tokenizer;
+        const tokenizer_options = {
+            padding: true,
+            truncation: true,
+        }
+        let inputs;
+        if (this instanceof TranslationPipeline && '_build_translation_inputs' in tokenizer) {
+            // TODO: move to Translation pipeline?
+            // Currently put here to avoid code duplication
+            // @ts-ignore
+            inputs = tokenizer._build_translation_inputs(texts, tokenizer_options, generate_kwargs);
+
+        } else {
+            inputs = tokenizer(texts, tokenizer_options);
+        }
+
+        const outputTokenIds = await this.model.generate({ ...inputs, ...generate_kwargs });
+        return tokenizer.batch_decode(/** @type {Tensor} */(outputTokenIds), {
+            skip_special_tokens: true,
+        }).map(text => ({ [this._key]: text }));
     }
-
-    // Handle task specific params:
-    // @ts-expect-error TS2339
-    const task_specific_params = this.model.config.task_specific_params;
-    if (task_specific_params && task_specific_params[this.task]) {
-      // Add prefixes, if present
-      if (task_specific_params[this.task].prefix) {
-        texts = texts.map((x) => task_specific_params[this.task].prefix + x);
-      }
-
-      // TODO update generation config
-    }
-
-    const tokenizer = this.tokenizer;
-    const tokenizer_options = {
-      padding: true,
-      truncation: true,
-    };
-    let inputs;
-    if (
-      this instanceof TranslationPipeline &&
-      "_build_translation_inputs" in tokenizer
-    ) {
-      // TODO: move to Translation pipeline?
-      // Currently put here to avoid code duplication
-      // @ts-ignore
-      inputs = tokenizer._build_translation_inputs(
-        texts,
-        tokenizer_options,
-        generate_kwargs,
-      );
-    } else {
-      inputs = tokenizer(texts, tokenizer_options);
-    }
-
-    const outputTokenIds = await this.model.generate({
-      ...inputs,
-      ...generate_kwargs,
-    });
-    return tokenizer
-      .batch_decode(/** @type {Tensor} */ (outputTokenIds), {
-        skip_special_tokens: true,
-      })
-      .map((text) => ({ [this._key]: text }));
-  }
 }
+
 
 /**
  * @typedef {Object} SummarizationSingle
@@ -22511,22 +22720,19 @@ class Text2TextGenerationPipeline
  * // [{ summary_text: ' The Eiffel Tower is about the same height as an 81-storey building and the tallest structure in Paris. It is the second tallest free-standing structure in France after the Millau Viaduct.' }]
  * ```
  */
-class SummarizationPipeline
-  extends /** @type {new (options: TextPipelineConstructorArgs) => SummarizationPipelineType} */ (
-    /** @type {any} */ (Text2TextGenerationPipeline)
-  )
-{
-  /** @type {'summary_text'} */
-  _key = "summary_text";
+class SummarizationPipeline extends (/** @type {new (options: TextPipelineConstructorArgs) => SummarizationPipelineType} */ (/** @type {any} */ (Text2TextGenerationPipeline))) {
+    /** @type {'summary_text'} */
+    _key = 'summary_text';
 
-  /**
-   * Create a new SummarizationPipeline.
-   * @param {TextPipelineConstructorArgs} options An object used to instantiate the pipeline.
-   */
-  constructor(options) {
-    super(options);
-  }
+    /**
+     * Create a new SummarizationPipeline.
+     * @param {TextPipelineConstructorArgs} options An object used to instantiate the pipeline.
+     */
+    constructor(options) {
+        super(options);
+    }
 }
+
 
 /**
  * @typedef {Object} TranslationSingle
@@ -22586,25 +22792,21 @@ class SummarizationPipeline
  * // [{ translation_text: 'Le chef des Nations affirme qu 'il n 'y a military solution in Syria.' }]
  * ```
  */
-class TranslationPipeline
-  extends /** @type {new (options: TextPipelineConstructorArgs) => TranslationPipelineType} */ (
-    /** @type {any} */ (Text2TextGenerationPipeline)
-  )
-{
-  /** @type {'translation_text'} */
-  _key = "translation_text";
+class TranslationPipeline extends (/** @type {new (options: TextPipelineConstructorArgs) => TranslationPipelineType} */ (/** @type {any} */ (Text2TextGenerationPipeline))) {
+    /** @type {'translation_text'} */
+    _key = 'translation_text';
 
-  /**
-   * Create a new TranslationPipeline.
-   * @param {TextPipelineConstructorArgs} options An object used to instantiate the pipeline.
-   */
-  constructor(options) {
-    super(options);
-  }
+    /**
+     * Create a new TranslationPipeline.
+     * @param {TextPipelineConstructorArgs} options An object used to instantiate the pipeline.
+     */
+    constructor(options) {
+        super(options);
+    }
 }
 
 function isChat(x) {
-  return Array.isArray(x) && x.every((x) => "role" in x && "content" in x);
+    return Array.isArray(x) && x.every(x => 'role' in x && 'content' in x);
 }
 
 /**
@@ -22677,117 +22879,102 @@ function isChat(x) {
  * // }]
  * ```
  */
-class TextGenerationPipeline
-  extends /** @type {new (options: TextPipelineConstructorArgs) => TextGenerationPipelineType} */ (
-    Pipeline
-  )
-{
-  /**
-   * Create a new TextGenerationPipeline.
-   * @param {TextPipelineConstructorArgs} options An object used to instantiate the pipeline.
-   */
-  constructor(options) {
-    super(options);
-  }
+class TextGenerationPipeline extends (/** @type {new (options: TextPipelineConstructorArgs) => TextGenerationPipelineType} */ (Pipeline)) {
 
-  /** @type {TextGenerationPipelineCallback} */
-  async _call(texts, generate_kwargs = {}) {
-    let isBatched = false;
-    let isChatInput = false;
-
-    // By default, do not add special tokens, unless the tokenizer specifies otherwise
-    let add_special_tokens =
-      generate_kwargs.add_special_tokens ??
-      (this.tokenizer.add_bos_token || this.tokenizer.add_eos_token) ??
-      false;
-
-    // Normalize inputs
-    /** @type {string[]} */
-    let inputs;
-    if (typeof texts === "string") {
-      inputs = texts = [texts];
-    } else if (
-      Array.isArray(texts) &&
-      texts.every((x) => typeof x === "string")
-    ) {
-      isBatched = true;
-      inputs = /** @type {string[]} */ (texts);
-    } else {
-      if (isChat(texts)) {
-        texts = [/** @type {Chat} */ (texts)];
-      } else if (Array.isArray(texts) && texts.every(isChat)) {
-        isBatched = true;
-      } else {
-        throw new Error(
-          "Input must be a string, an array of strings, a Chat, or an array of Chats",
-        );
-      }
-      isChatInput = true;
-
-      // If the input is a chat, we need to apply the chat template
-      inputs = /** @type {string[]} */ (
-        /** @type {Chat[]} */ (texts).map((x) =>
-          this.tokenizer.apply_chat_template(x, {
-            tokenize: false,
-            add_generation_prompt: true,
-          }),
-        )
-      );
-      add_special_tokens = false; // Chat template handles this already
+    /**
+     * Create a new TextGenerationPipeline.
+     * @param {TextPipelineConstructorArgs} options An object used to instantiate the pipeline.
+     */
+    constructor(options) {
+        super(options);
     }
 
-    // By default, return full text
-    const return_full_text = isChatInput
-      ? false
-      : (generate_kwargs.return_full_text ?? true);
+    /** @type {TextGenerationPipelineCallback} */
+    async _call(texts, generate_kwargs = {}) {
+        let isBatched = false;
+        let isChatInput = false;
 
-    this.tokenizer.padding_side = "left";
-    const text_inputs = this.tokenizer(inputs, {
-      add_special_tokens,
-      padding: true,
-      truncation: true,
-    });
+        // By default, do not add special tokens, unless the tokenizer specifies otherwise
+        let add_special_tokens = generate_kwargs.add_special_tokens
+            ?? (this.tokenizer.add_bos_token || this.tokenizer.add_eos_token)
+            ?? false;
 
-    const outputTokenIds = /** @type {Tensor} */ (
-      await this.model.generate({
-        ...text_inputs,
-        ...generate_kwargs,
-      })
-    );
+        // Normalize inputs
+        /** @type {string[]} */
+        let inputs;
+        if (typeof texts === 'string') {
+            inputs = texts = [texts];
+        } else if (Array.isArray(texts) && texts.every(x => typeof x === 'string')) {
+            isBatched = true;
+            inputs = /** @type {string[]} */(texts);
+        } else {
+            if (isChat(texts)) {
+                texts = [/** @type {Chat} */(texts)];
+            } else if (Array.isArray(texts) && texts.every(isChat)) {
+                isBatched = true;
+            } else {
+                throw new Error('Input must be a string, an array of strings, a Chat, or an array of Chats');
+            }
+            isChatInput = true;
 
-    const decoded = this.tokenizer.batch_decode(outputTokenIds, {
-      skip_special_tokens: true,
-    });
+            // If the input is a chat, we need to apply the chat template
+            inputs = /** @type {string[]} */(/** @type {Chat[]} */ (texts).map(
+                x => this.tokenizer.apply_chat_template(x, {
+                    tokenize: false,
+                    add_generation_prompt: true,
+                })
+            ));
+            add_special_tokens = false; // Chat template handles this already
+        }
 
-    let promptLengths;
-    if (!return_full_text && text_inputs.input_ids.dims.at(-1) > 0) {
-      promptLengths = this.tokenizer
-        .batch_decode(text_inputs.input_ids, {
-          skip_special_tokens: true,
-        })
-        .map((x) => x.length);
+        // By default, return full text
+        const return_full_text = isChatInput
+            ? false
+            : generate_kwargs.return_full_text ?? true;
+
+        this.tokenizer.padding_side = 'left';
+        const text_inputs = this.tokenizer(inputs, {
+            add_special_tokens,
+            padding: true,
+            truncation: true,
+        });
+
+        const outputTokenIds = /** @type {Tensor} */(await this.model.generate({
+            ...text_inputs,
+            ...generate_kwargs
+        }));
+
+        const decoded = this.tokenizer.batch_decode(outputTokenIds, {
+            skip_special_tokens: true,
+        });
+
+        let promptLengths;
+        if (!return_full_text && text_inputs.input_ids.dims.at(-1) > 0) {
+            promptLengths = this.tokenizer.batch_decode(text_inputs.input_ids, {
+                skip_special_tokens: true,
+            }).map(x => x.length);
+        }
+
+        /** @type {TextGenerationOutput[]} */
+        const toReturn = Array.from({ length: texts.length }, _ => []);
+        for (let i = 0; i < decoded.length; ++i) {
+            const textIndex = Math.floor(i / outputTokenIds.dims[0] * texts.length);
+
+            if (promptLengths) {
+                // Trim the decoded text to only include the generated part
+                decoded[i] = decoded[i].slice(promptLengths[textIndex]);
+            }
+            toReturn[textIndex].push({
+                generated_text: isChatInput
+                    ? [
+                        ...((/** @type {Chat[]} */(texts)[textIndex])),
+                        { role: 'assistant', content: decoded[i] },
+                    ]
+                    : decoded[i]
+            });
+        }
+        return (!isBatched && toReturn.length === 1) ? toReturn[0] : toReturn;
     }
-
-    /** @type {TextGenerationOutput[]} */
-    const toReturn = Array.from({ length: texts.length }, (_) => []);
-    for (let i = 0; i < decoded.length; ++i) {
-      const textIndex = Math.floor((i / outputTokenIds.dims[0]) * texts.length);
-
-      if (promptLengths) {
-        // Trim the decoded text to only include the generated part
-        decoded[i] = decoded[i].slice(promptLengths[textIndex]);
-      }
-      toReturn[textIndex].push({
-        generated_text: isChatInput
-          ? [
-              .../** @type {Chat[]} */ (texts)[textIndex],
-              { role: "assistant", content: decoded[i] },
-            ]
-          : decoded[i],
-      });
-    }
-    return !isBatched && toReturn.length === 1 ? toReturn[0] : toReturn;
-  }
 }
 
 /**
@@ -22846,108 +23033,99 @@ class TextGenerationPipeline
  * // }
  * ```
  */
-class ZeroShotClassificationPipeline
-  extends /** @type {new (options: TextPipelineConstructorArgs) => ZeroShotClassificationPipelineType} */ (
-    Pipeline
-  )
-{
-  /**
-   * Create a new ZeroShotClassificationPipeline.
-   * @param {TextPipelineConstructorArgs} options An object used to instantiate the pipeline.
-   */
-  constructor(options) {
-    super(options);
+class ZeroShotClassificationPipeline extends (/** @type {new (options: TextPipelineConstructorArgs) => ZeroShotClassificationPipelineType} */ (Pipeline)) {
+    /**
+     * Create a new ZeroShotClassificationPipeline.
+     * @param {TextPipelineConstructorArgs} options An object used to instantiate the pipeline.
+     */
+    constructor(options) {
+        super(options);
 
-    // Use model config to get label2id mapping
-    this.label2id = Object.fromEntries(
-      Object.entries(/** @type {any} */ (this).model.config.label2id).map(
-        ([k, v]) => [k.toLowerCase(), v],
-      ),
-    );
+        // Use model config to get label2id mapping
+        this.label2id = Object.fromEntries(
+            Object.entries((/** @type {any} */(this).model).config.label2id).map(
+                ([k, v]) => [k.toLowerCase(), v]
+            )
+        );
 
-    this.entailment_id = this.label2id["entailment"];
-    if (this.entailment_id === undefined) {
-      console.warn(
-        "Could not find 'entailment' in label2id mapping. Using 2 as entailment_id.",
-      );
-      this.entailment_id = 2;
-    }
-
-    this.contradiction_id =
-      this.label2id["contradiction"] ?? this.label2id["not_entailment"];
-    if (this.contradiction_id === undefined) {
-      console.warn(
-        "Could not find 'contradiction' in label2id mapping. Using 0 as contradiction_id.",
-      );
-      this.contradiction_id = 0;
-    }
-  }
-
-  /** @type {ZeroShotClassificationPipelineCallback} */
-  async _call(
-    texts,
-    candidate_labels,
-    { hypothesis_template = "This example is {}.", multi_label = false } = {},
-  ) {
-    const isBatched = Array.isArray(texts);
-    if (!isBatched) {
-      texts = [/** @type {string} */ (texts)];
-    }
-    if (!Array.isArray(candidate_labels)) {
-      candidate_labels = [candidate_labels];
-    }
-
-    // Insert labels into hypothesis template
-    const hypotheses = candidate_labels.map((x) =>
-      hypothesis_template.replace("{}", x),
-    );
-
-    // How to perform the softmax over the logits:
-    //  - true:  softmax over the entailment vs. contradiction dim for each label independently
-    //  - false: softmax the "entailment" logits over all candidate labels
-    const softmaxEach = multi_label || candidate_labels.length === 1;
-
-    /** @type {ZeroShotClassificationOutput[]} */
-    const toReturn = [];
-    for (const premise of texts) {
-      const entails_logits = [];
-
-      for (const hypothesis of hypotheses) {
-        const inputs = this.tokenizer(premise, {
-          text_pair: hypothesis,
-          padding: true,
-          truncation: true,
-        });
-        const outputs = await this.model(inputs);
-
-        if (softmaxEach) {
-          entails_logits.push([
-            outputs.logits.data[this.contradiction_id],
-            outputs.logits.data[this.entailment_id],
-          ]);
-        } else {
-          entails_logits.push(outputs.logits.data[this.entailment_id]);
+        this.entailment_id = this.label2id['entailment'];
+        if (this.entailment_id === undefined) {
+            console.warn("Could not find 'entailment' in label2id mapping. Using 2 as entailment_id.");
+            this.entailment_id = 2;
         }
-      }
 
-      /** @type {number[]} */
-      const scores = softmaxEach
-        ? entails_logits.map((x) => (0,_utils_maths_js__WEBPACK_IMPORTED_MODULE_6__.softmax)(x)[1])
-        : (0,_utils_maths_js__WEBPACK_IMPORTED_MODULE_6__.softmax)(entails_logits);
-
-      // Sort by scores (desc) and return scores with indices
-      const scores_sorted = scores
-        .map((x, i) => [x, i])
-        .sort((a, b) => b[0] - a[0]);
-
-      toReturn.push({
-        sequence: premise,
-        labels: scores_sorted.map((x) => candidate_labels[x[1]]),
-        scores: scores_sorted.map((x) => x[0]),
-      });
+        this.contradiction_id = this.label2id['contradiction'] ?? this.label2id['not_entailment'];
+        if (this.contradiction_id === undefined) {
+            console.warn("Could not find 'contradiction' in label2id mapping. Using 0 as contradiction_id.");
+            this.contradiction_id = 0;
+        }
     }
-    return isBatched ? toReturn : toReturn[0];
-  }
+
+    /** @type {ZeroShotClassificationPipelineCallback} */
+    async _call(texts, candidate_labels, {
+        hypothesis_template = "This example is {}.",
+        multi_label = false,
+    } = {}) {
+
+        const isBatched = Array.isArray(texts);
+        if (!isBatched) {
+            texts = [/** @type {string} */ (texts)];
+        }
+        if (!Array.isArray(candidate_labels)) {
+            candidate_labels = [candidate_labels];
+        }
+
+        // Insert labels into hypothesis template
+        const hypotheses = candidate_labels.map(
+            x => hypothesis_template.replace('{}', x)
+        );
+
+        // How to perform the softmax over the logits:
+        //  - true:  softmax over the entailment vs. contradiction dim for each label independently
+        //  - false: softmax the "entailment" logits over all candidate labels
+        const softmaxEach = multi_label || candidate_labels.length === 1;
+
+        /** @type {ZeroShotClassificationOutput[]} */
+        const toReturn = [];
+        for (const premise of texts) {
+            const entails_logits = [];
+
+            for (const hypothesis of hypotheses) {
+                const inputs = this.tokenizer(premise, {
+                    text_pair: hypothesis,
+                    padding: true,
+                    truncation: true,
+                })
+                const outputs = await this.model(inputs)
+
+                if (softmaxEach) {
+                    entails_logits.push([
+                        outputs.logits.data[this.contradiction_id],
+                        outputs.logits.data[this.entailment_id]
+                    ])
+                } else {
+                    entails_logits.push(outputs.logits.data[this.entailment_id])
+                }
+            }
+
+            /** @type {number[]} */
+            const scores = softmaxEach
+                ? entails_logits.map(x => (0,_utils_maths_js__WEBPACK_IMPORTED_MODULE_6__.softmax)(x)[1])
+                : (0,_utils_maths_js__WEBPACK_IMPORTED_MODULE_6__.softmax)(entails_logits);
+
+            // Sort by scores (desc) and return scores with indices
+            const scores_sorted = scores
+                .map((x, i) => [x, i])
+                .sort((a, b) => (b[0] - a[0]));
+
+            toReturn.push({
+                sequence: premise,
+                labels: scores_sorted.map(x => candidate_labels[x[1]]),
+                scores: scores_sorted.map(x => x[0]),
+            });
+        }
+        return isBatched ? toReturn : toReturn[0];
+    }
 }
 
 /**
@@ -23012,77 +23190,71 @@ class ZeroShotClassificationPipeline
  * // }
  * ```
  */
-class FeatureExtractionPipeline
-  extends /** @type {new (options: TextPipelineConstructorArgs) => FeatureExtractionPipelineType} */ (
-    Pipeline
-  )
-{
-  /**
-   * Create a new FeatureExtractionPipeline.
-   * @param {TextPipelineConstructorArgs} options An object used to instantiate the pipeline.
-   */
-  constructor(options) {
-    super(options);
-  }
-
-  /** @type {FeatureExtractionPipelineCallback} */
-  async _call(
-    texts,
-    {
-      pooling = /** @type {'none'} */ ("none"),
-      normalize = false,
-      quantize = false,
-      precision = /** @type {'binary'} */ ("binary"),
-    } = {},
-  ) {
-    // Run tokenization
-    const model_inputs = this.tokenizer(texts, {
-      padding: true,
-      truncation: true,
-    });
-
-    // Run model
-    const outputs = await this.model(model_inputs);
-
-    // TODO: Provide warning to the user that they might be using model which was not exported
-    // specifically for feature extraction
-    // console.log(this.model.config)
-    // console.log(outputs)
-
-    /** @type {Tensor} */
-    let result =
-      outputs.last_hidden_state ?? outputs.logits ?? outputs.token_embeddings;
-
-    switch (pooling) {
-      case "none":
-        // Skip pooling
-        break;
-      case "mean":
-        result = (0,_utils_tensor_js__WEBPACK_IMPORTED_MODULE_8__.mean_pooling)(result, model_inputs.attention_mask);
-        break;
-      case "first_token":
-      case "cls":
-        result = result.slice(null, 0);
-        break;
-      case "last_token":
-      case "eos":
-        result = result.slice(null, -1);
-        break;
-      default:
-        throw Error(`Pooling method '${pooling}' not supported.`);
+class FeatureExtractionPipeline extends (/** @type {new (options: TextPipelineConstructorArgs) => FeatureExtractionPipelineType} */ (Pipeline)) {
+    /**
+     * Create a new FeatureExtractionPipeline.
+     * @param {TextPipelineConstructorArgs} options An object used to instantiate the pipeline.
+     */
+    constructor(options) {
+        super(options);
     }
 
-    if (normalize) {
-      result = result.normalize(2, -1);
-    }
+    /** @type {FeatureExtractionPipelineCallback} */
+    async _call(texts, {
+        pooling = /** @type {'none'} */('none'),
+        normalize = false,
+        quantize = false,
+        precision = /** @type {'binary'} */('binary'),
+    } = {}) {
 
-    if (quantize) {
-      result = (0,_utils_tensor_js__WEBPACK_IMPORTED_MODULE_8__.quantize_embeddings)(result, precision);
-    }
+        // Run tokenization
+        const model_inputs = this.tokenizer(texts, {
+            padding: true,
+            truncation: true,
+        });
 
-    return result;
-  }
+        // Run model
+        const outputs = await this.model(model_inputs)
+
+        // TODO: Provide warning to the user that they might be using model which was not exported
+        // specifically for feature extraction
+        // console.log(this.model.config)
+        // console.log(outputs)
+
+        /** @type {Tensor} */
+        let result = outputs.last_hidden_state ?? outputs.logits ?? outputs.token_embeddings;
+
+        switch (pooling) {
+            case 'none':
+                // Skip pooling
+                break;
+            case 'mean':
+                result = (0,_utils_tensor_js__WEBPACK_IMPORTED_MODULE_8__.mean_pooling)(result, model_inputs.attention_mask);
+                break;
+            case 'first_token':
+            case 'cls':
+                result = result.slice(null, 0);
+                break;
+            case 'last_token':
+            case 'eos':
+                result = result.slice(null, -1);
+                break;
+            default:
+                throw Error(`Pooling method '${pooling}' not supported.`);
+        }
+
+        if (normalize) {
+            result = result.normalize(2, -1);
+        }
+
+        if (quantize) {
+            result = (0,_utils_tensor_js__WEBPACK_IMPORTED_MODULE_8__.quantize_embeddings)(result, precision);
+        }
+
+        return result;
+    }
 }
+
 
 /**
  * @typedef {Object} ImageFeatureExtractionPipelineOptions Parameters specific to image feature extraction pipelines.
@@ -23126,40 +23298,37 @@ class FeatureExtractionPipeline
  * // }
  * ```
  */
-class ImageFeatureExtractionPipeline
-  extends /** @type {new (options: ImagePipelineConstructorArgs) => ImageFeatureExtractionPipelineType} */ (
-    Pipeline
-  )
-{
-  /**
-   * Create a new ImageFeatureExtractionPipeline.
-   * @param {ImagePipelineConstructorArgs} options An object used to instantiate the pipeline.
-   */
-  constructor(options) {
-    super(options);
-  }
-
-  /** @type {ImageFeatureExtractionPipelineCallback} */
-  async _call(images, { pool = null } = {}) {
-    const preparedImages = await prepareImages(images);
-    const { pixel_values } = await this.processor(preparedImages);
-    const outputs = await this.model({ pixel_values });
-
-    /** @type {Tensor} */
-    let result;
-    if (pool) {
-      if (!("pooler_output" in outputs)) {
-        throw Error(
-          `No pooled output was returned. Make sure the model has a 'pooler' layer when using the 'pool' option.`,
-        );
-      }
-      result = outputs.pooler_output;
-    } else {
-      result =
-        outputs.last_hidden_state ?? outputs.logits ?? outputs.image_embeds;
+class ImageFeatureExtractionPipeline extends (/** @type {new (options: ImagePipelineConstructorArgs) => ImageFeatureExtractionPipelineType} */ (Pipeline)) {
+    /**
+     * Create a new ImageFeatureExtractionPipeline.
+     * @param {ImagePipelineConstructorArgs} options An object used to instantiate the pipeline.
+     */
+    constructor(options) {
+        super(options);
     }
-    return result;
-  }
+
+    /** @type {ImageFeatureExtractionPipelineCallback} */
+    async _call(images, {
+        pool = null,
+    } = {}) {
+
+        const preparedImages = await prepareImages(images);
+        const { pixel_values } = await this.processor(preparedImages);
+        const outputs = await this.model({ pixel_values });
+
+        /** @type {Tensor} */
+        let result;
+        if (pool) {
+            if (!('pooler_output' in outputs)) {
+                throw Error(`No pooled output was returned. Make sure the model has a 'pooler' layer when using the 'pool' option.`);
+            }
+            result = outputs.pooler_output;
+
+        } else {
+            result = outputs.last_hidden_state ?? outputs.logits ?? outputs.image_embeds;
+        }
+        return result;
+    }
 }
 
 // TODO
@@ -23217,50 +23386,51 @@ class ImageFeatureExtractionPipeline
  * // ]
  * ```
  */
-class AudioClassificationPipeline
-  extends /** @type {new (options: AudioPipelineConstructorArgs) => AudioClassificationPipelineType} */ (
-    Pipeline
-  )
-{
-  /**
-   * Create a new AudioClassificationPipeline.
-   * @param {AudioPipelineConstructorArgs} options An object used to instantiate the pipeline.
-   */
-  constructor(options) {
-    super(options);
-  }
+class AudioClassificationPipeline extends (/** @type {new (options: AudioPipelineConstructorArgs) => AudioClassificationPipelineType} */ (Pipeline)) {
 
-  /** @type {AudioClassificationPipelineCallback} */
-  async _call(audio, { top_k = 5 } = {}) {
-    const sampling_rate = this.processor.feature_extractor.config.sampling_rate;
-    const preparedAudios = await prepareAudios(audio, sampling_rate);
-
-    // @ts-expect-error TS2339
-    const id2label = this.model.config.id2label;
-
-    const toReturn = [];
-    for (const aud of preparedAudios) {
-      const inputs = await this.processor(aud);
-      const output = await this.model(inputs);
-      const logits = output.logits[0];
-
-      const scores = await (0,_utils_tensor_js__WEBPACK_IMPORTED_MODULE_8__.topk)(
-        new _utils_tensor_js__WEBPACK_IMPORTED_MODULE_8__.Tensor("float32", (0,_utils_maths_js__WEBPACK_IMPORTED_MODULE_6__.softmax)(logits.data), logits.dims),
-        top_k,
-      );
-
-      const values = scores[0].tolist();
-      const indices = scores[1].tolist();
-
-      const vals = indices.map((x, i) => ({
-        label: /** @type {string} */ (id2label ? id2label[x] : `LABEL_${x}`),
-        score: /** @type {number} */ (values[i]),
-      }));
-
-      toReturn.push(vals);
+    /**
+     * Create a new AudioClassificationPipeline.
+     * @param {AudioPipelineConstructorArgs} options An object used to instantiate the pipeline.
+     */
+    constructor(options) {
+        super(options);
     }
-    return Array.isArray(audio) ? toReturn : toReturn[0];
-  }
+
+    /** @type {AudioClassificationPipelineCallback} */
+    async _call(audio, {
+        top_k = 5
+    } = {}) {
+
+        const sampling_rate = this.processor.feature_extractor.config.sampling_rate;
+        const preparedAudios = await prepareAudios(audio, sampling_rate);
+
+        // @ts-expect-error TS2339
+        const id2label = this.model.config.id2label;
+
+        const toReturn = [];
+        for (const aud of preparedAudios) {
+            const inputs = await this.processor(aud);
+            const output = await this.model(inputs);
+            const logits = output.logits[0];
+
+            const scores = await (0,_utils_tensor_js__WEBPACK_IMPORTED_MODULE_8__.topk)(new _utils_tensor_js__WEBPACK_IMPORTED_MODULE_8__.Tensor(
+                'float32',
+                (0,_utils_maths_js__WEBPACK_IMPORTED_MODULE_6__.softmax)(logits.data),
+                logits.dims,
+            ), top_k);
+
+            const values = scores[0].tolist();
+            const indices = scores[1].tolist();
+
+            const vals = indices.map((x, i) => ({
+                label: /** @type {string} */ (id2label ? id2label[x] : `LABEL_${x}`),
+                score: /** @type {number} */ (values[i]),
+            }));
+
+            toReturn.push(vals);
+        };
+        return Array.isArray(audio) ? toReturn : toReturn[0];
+    }
 }
 
 /**
@@ -23302,63 +23472,57 @@ class AudioClassificationPipeline
  * // ]
  * ```
  */
-class ZeroShotAudioClassificationPipeline
-  extends /** @type {new (options: TextAudioPipelineConstructorArgs) => ZeroShotAudioClassificationPipelineType} */ (
-    Pipeline
-  )
-{
-  /**
-   * Create a new ZeroShotAudioClassificationPipeline.
-   * @param {TextAudioPipelineConstructorArgs} options An object used to instantiate the pipeline.
-   */
-  constructor(options) {
-    super(options);
-  }
+class ZeroShotAudioClassificationPipeline extends (/** @type {new (options: TextAudioPipelineConstructorArgs) => ZeroShotAudioClassificationPipelineType} */ (Pipeline)) {
 
-  /** @type {ZeroShotAudioClassificationPipelineCallback} */
-  async _call(
-    audio,
-    candidate_labels,
-    { hypothesis_template = "This is a sound of {}." } = {},
-  ) {
-    const single = !Array.isArray(audio);
-    if (single) {
-      audio = [/** @type {AudioInput} */ (audio)];
+    /**
+     * Create a new ZeroShotAudioClassificationPipeline.
+     * @param {TextAudioPipelineConstructorArgs} options An object used to instantiate the pipeline.
+     */
+    constructor(options) {
+        super(options);
     }
 
-    // Insert label into hypothesis template
-    const texts = candidate_labels.map((x) =>
-      hypothesis_template.replace("{}", x),
-    );
+    /** @type {ZeroShotAudioClassificationPipelineCallback} */
+    async _call(audio, candidate_labels, {
+        hypothesis_template = "This is a sound of {}."
+    } = {}) {
 
-    // Run tokenization
-    const text_inputs = this.tokenizer(texts, {
-      padding: true,
-      truncation: true,
-    });
+        const single = !Array.isArray(audio);
+        if (single) {
+            audio = [/** @type {AudioInput} */ (audio)];
+        }
 
-    const sampling_rate = this.processor.feature_extractor.config.sampling_rate;
-    const preparedAudios = await prepareAudios(audio, sampling_rate);
+        // Insert label into hypothesis template
+        const texts = candidate_labels.map(
+            x => hypothesis_template.replace('{}', x)
+        );
 
-    const toReturn = [];
-    for (const aud of preparedAudios) {
-      const audio_inputs = await this.processor(aud);
+        // Run tokenization
+        const text_inputs = this.tokenizer(texts, {
+            padding: true,
+            truncation: true,
+        });
 
-      // Run model with both text and audio inputs
-      const output = await this.model({ ...text_inputs, ...audio_inputs });
+        const sampling_rate = this.processor.feature_extractor.config.sampling_rate;
+        const preparedAudios = await prepareAudios(audio, sampling_rate);
 
-      // Compute softmax per audio
-      const probs = (0,_utils_maths_js__WEBPACK_IMPORTED_MODULE_6__.softmax)(output.logits_per_audio.data);
+        const toReturn = [];
+        for (const aud of preparedAudios) {
+            const audio_inputs = await this.processor(aud);
 
-      toReturn.push(
-        [...probs].map((x, i) => ({
-          score: x,
-          label: candidate_labels[i],
-        })),
-      );
+            // Run model with both text and audio inputs
+            const output = await this.model({ ...text_inputs, ...audio_inputs });
+
+            // Compute softmax per audio
+            const probs = (0,_utils_maths_js__WEBPACK_IMPORTED_MODULE_6__.softmax)(output.logits_per_audio.data);
+
+            toReturn.push([...probs].map((x, i) => ({
+                score: x,
+                label: candidate_labels[i]
+            })));
+        }
+        return single ? toReturn[0] : toReturn;
     }
-    return single ? toReturn[0] : toReturn;
-  }
 }
 
 /**
@@ -23463,238 +23627,215 @@ class ZeroShotAudioClassificationPipeline
  * // { text: " So in college, I was a government major, which means [...] So I'd start off light and I'd bump it up" }
  * ```
  */
-class AutomaticSpeechRecognitionPipeline
-  extends /** @type {new (options: TextAudioPipelineConstructorArgs) => AutomaticSpeechRecognitionPipelineType} */ (
-    Pipeline
-  )
-{
-  /**
-   * Create a new AutomaticSpeechRecognitionPipeline.
-   * @param {TextAudioPipelineConstructorArgs} options An object used to instantiate the pipeline.
-   */
-  constructor(options) {
-    super(options);
-  }
+class AutomaticSpeechRecognitionPipeline extends (/** @type {new (options: TextAudioPipelineConstructorArgs) => AutomaticSpeechRecognitionPipelineType} */ (Pipeline)) {
 
-  /** @type {AutomaticSpeechRecognitionPipelineCallback} */
-  async _call(audio, kwargs = {}) {
-    switch (this.model.config.model_type) {
-      case "whisper":
-      case "lite-whisper":
-        return this._call_whisper(audio, kwargs);
-      case "wav2vec2":
-      case "wav2vec2-bert":
-      case "unispeech":
-      case "unispeech-sat":
-      case "hubert":
-      case "parakeet_ctc":
-        return this._call_wav2vec2(audio, kwargs);
-      case "moonshine":
-        return this._call_moonshine(audio, kwargs);
-      default:
-        throw new Error(
-          `AutomaticSpeechRecognitionPipeline does not support model type '${this.model.config.model_type}'.`,
-        );
-    }
-  }
-
-  /**
-   * @type {AutomaticSpeechRecognitionPipelineCallback}
-   * @private
-   */
-  async _call_wav2vec2(audio, kwargs) {
-    // TODO use kwargs
-
-    if (kwargs.language) {
-      console.warn(
-        '`language` parameter is not yet supported for `wav2vec2` models, defaulting to "English".',
-      );
-    }
-    if (kwargs.task) {
-      console.warn(
-        '`task` parameter is not yet supported for `wav2vec2` models, defaulting to "transcribe".',
-      );
+    /**
+     * Create a new AutomaticSpeechRecognitionPipeline.
+     * @param {TextAudioPipelineConstructorArgs} options An object used to instantiate the pipeline.
+     */
+    constructor(options) {
+        super(options);
     }
 
-    const single = !Array.isArray(audio);
-    if (single) {
-      audio = [/** @type {AudioInput} */ (audio)];
+    /** @type {AutomaticSpeechRecognitionPipelineCallback} */
+    async _call(audio, kwargs = {}) {
+        switch (this.model.config.model_type) {
+            case 'whisper':
+            case 'lite-whisper':
+                return this._call_whisper(audio, kwargs)
+            case 'wav2vec2':
+            case 'wav2vec2-bert':
+            case 'unispeech':
+            case 'unispeech-sat':
+            case 'hubert':
+            case 'parakeet_ctc':
+                return this._call_wav2vec2(audio, kwargs)
+            case 'moonshine':
+                return this._call_moonshine(audio, kwargs)
+            default:
+                throw new Error(`AutomaticSpeechRecognitionPipeline does not support model type '${this.model.config.model_type}'.`)
+        }
     }
 
-    const sampling_rate = this.processor.feature_extractor.config.sampling_rate;
-    const preparedAudios = await prepareAudios(audio, sampling_rate);
+    /**
+     * @type {AutomaticSpeechRecognitionPipelineCallback}
+     * @private
+     */
+    async _call_wav2vec2(audio, kwargs) {
+        // TODO use kwargs
 
-    const toReturn = [];
-    for (const aud of preparedAudios) {
-      const inputs = await this.processor(aud);
-      const output = await this.model(inputs);
-      const logits = output.logits[0];
-
-      const predicted_ids = [];
-      for (const item of logits) {
-        predicted_ids.push((0,_utils_maths_js__WEBPACK_IMPORTED_MODULE_6__.max)(item.data)[1]);
-      }
-      const predicted_sentences = this.tokenizer
-        .decode(predicted_ids, { skip_special_tokens: true })
-        .trim();
-      toReturn.push({ text: predicted_sentences });
-    }
-    return single ? toReturn[0] : toReturn;
-  }
-
-  /**
-   * @type {AutomaticSpeechRecognitionPipelineCallback}
-   * @private
-   */
-  async _call_whisper(audio, kwargs) {
-    const return_timestamps = kwargs.return_timestamps ?? false;
-    const chunk_length_s = kwargs.chunk_length_s ?? 0;
-    const force_full_sequences = kwargs.force_full_sequences ?? false;
-    let stride_length_s = kwargs.stride_length_s ?? null;
-
-    const generation_config = { ...kwargs };
-
-    if (return_timestamps === "word") {
-      generation_config["return_token_timestamps"] = true;
-      generation_config["return_timestamps"] = false; // Do not predict timestamp tokens
-    }
-
-    const single = !Array.isArray(audio);
-    if (single) {
-      audio = [/** @type {AudioInput} */ (audio)];
-    }
-
-    // @ts-expect-error TS2339
-    const time_precision =
-      this.processor.feature_extractor.config.chunk_length /
-      this.model.config.max_source_positions;
-    const hop_length = this.processor.feature_extractor.config.hop_length;
-
-    const sampling_rate = this.processor.feature_extractor.config.sampling_rate;
-    const preparedAudios = await prepareAudios(audio, sampling_rate);
-
-    const toReturn = [];
-    for (const aud of preparedAudios) {
-      /** @type {{stride: number[], input_features: Tensor, is_last: boolean, tokens?: bigint[], token_timestamps?: number[]}[]} */
-      let chunks = [];
-      if (chunk_length_s > 0) {
-        if (stride_length_s === null) {
-          stride_length_s = chunk_length_s / 6;
-        } else if (chunk_length_s <= stride_length_s) {
-          throw Error(
-            "`chunk_length_s` must be larger than `stride_length_s`.",
-          );
+        if (kwargs.language) {
+            console.warn('`language` parameter is not yet supported for `wav2vec2` models, defaulting to "English".');
+        }
+        if (kwargs.task) {
+            console.warn('`task` parameter is not yet supported for `wav2vec2` models, defaulting to "transcribe".');
         }
 
-        // TODO support different stride_length_s (for left and right)
-
-        const window = sampling_rate * chunk_length_s;
-        const stride = sampling_rate * stride_length_s;
-        const jump = window - 2 * stride;
-        let offset = 0;
-
-        // Create subarrays of audio with overlaps
-        while (true) {
-          const offset_end = offset + window;
-          const subarr = aud.subarray(offset, offset_end);
-          const feature = await this.processor(subarr);
-
-          const is_first = offset === 0;
-          const is_last = offset_end >= aud.length;
-          chunks.push({
-            stride: [
-              subarr.length,
-              is_first ? 0 : stride,
-              is_last ? 0 : stride,
-            ],
-            input_features: feature.input_features,
-            is_last,
-          });
-          if (is_last) break;
-          offset += jump;
-        }
-      } else {
-        chunks = [
-          {
-            stride: [aud.length, 0, 0],
-            input_features: (await this.processor(aud)).input_features,
-            is_last: true,
-          },
-        ];
-      }
-
-      // Generate for each set of input features
-      for (const chunk of chunks) {
-        generation_config.num_frames = Math.floor(chunk.stride[0] / hop_length);
-
-        // NOTE: doing sequentially for now
-        const data = await this.model.generate({
-          inputs: chunk.input_features,
-          ...generation_config,
-        });
-
-        // TODO: Right now we only get top beam
-        if (return_timestamps === "word") {
-          // @ts-expect-error TS2339
-          chunk.tokens = data.sequences.tolist()[0];
-          // @ts-expect-error TS2339
-          chunk.token_timestamps = data.token_timestamps
-            .tolist()[0]
-            .map((/** @type {number} */ x) => (0,_utils_maths_js__WEBPACK_IMPORTED_MODULE_6__.round)(x, 2));
-        } else {
-          chunk.tokens = /** @type {Tensor} */ (data)[0].tolist();
+        const single = !Array.isArray(audio);
+        if (single) {
+            audio = [/** @type {AudioInput} */ (audio)];
         }
 
-        // convert stride to seconds
-        chunk.stride = chunk.stride.map((x) => x / sampling_rate);
-      }
+        const sampling_rate = this.processor.feature_extractor.config.sampling_rate;
+        const preparedAudios = await prepareAudios(audio, sampling_rate);
 
-      // Merge text chunks
-      // @ts-ignore
-      const [full_text, optional] = this.tokenizer._decode_asr(chunks, {
-        time_precision,
-        return_timestamps,
-        force_full_sequences,
-      });
+        const toReturn = [];
+        for (const aud of preparedAudios) {
+            const inputs = await this.processor(aud);
+            const output = await this.model(inputs);
+            const logits = output.logits[0];
 
-      toReturn.push({ text: full_text, ...optional });
+            const predicted_ids = [];
+            for (const item of logits) {
+                predicted_ids.push((0,_utils_maths_js__WEBPACK_IMPORTED_MODULE_6__.max)(item.data)[1])
+            }
+            const predicted_sentences = this.tokenizer.decode(predicted_ids, { skip_special_tokens: true }).trim();
+            toReturn.push({ text: predicted_sentences })
+        }
+        return single ? toReturn[0] : toReturn;
     }
-    return single ? toReturn[0] : toReturn;
-  }
 
-  /**
-   * @type {AutomaticSpeechRecognitionPipelineCallback}
-   * @private
-   */
-  async _call_moonshine(audio, kwargs) {
-    const single = !Array.isArray(audio);
-    if (single) {
-      audio = [/** @type {AudioInput} */ (audio)];
+    /**
+     * @type {AutomaticSpeechRecognitionPipelineCallback}
+     * @private
+     */
+    async _call_whisper(audio, kwargs) {
+        const return_timestamps = kwargs.return_timestamps ?? false;
+        const chunk_length_s = kwargs.chunk_length_s ?? 0;
+        const force_full_sequences = kwargs.force_full_sequences ?? false;
+        let stride_length_s = kwargs.stride_length_s ?? null;
+
+        const generation_config = { ...kwargs }
+
+        if (return_timestamps === 'word') {
+            generation_config['return_token_timestamps'] = true;
+            generation_config['return_timestamps'] = false; // Do not predict timestamp tokens
+        }
+
+        const single = !Array.isArray(audio);
+        if (single) {
+            audio = [/** @type {AudioInput} */ (audio)];
+        }
+
+        // @ts-expect-error TS2339
+        const time_precision = this.processor.feature_extractor.config.chunk_length / this.model.config.max_source_positions;
+        const hop_length = this.processor.feature_extractor.config.hop_length;
+
+        const sampling_rate = this.processor.feature_extractor.config.sampling_rate;
+        const preparedAudios = await prepareAudios(audio, sampling_rate);
+
+        const toReturn = [];
+        for (const aud of preparedAudios) {
+            /** @type {{stride: number[], input_features: Tensor, is_last: boolean, tokens?: bigint[], token_timestamps?: number[]}[]} */
+            let chunks = [];
+            if (chunk_length_s > 0) {
+                if (stride_length_s === null) {
+                    stride_length_s = chunk_length_s / 6;
+                } else if (chunk_length_s <= stride_length_s) {
+                    throw Error("`chunk_length_s` must be larger than `stride_length_s`.")
+                }
+
+                // TODO support different stride_length_s (for left and right)
+
+                const window = sampling_rate * chunk_length_s;
+                const stride = sampling_rate * stride_length_s;
+                const jump = window - 2 * stride;
+                let offset = 0;
+
+                // Create subarrays of audio with overlaps
+                while (true) {
+                    const offset_end = offset + window;
+                    const subarr = aud.subarray(offset, offset_end);
+                    const feature = await this.processor(subarr);
+
+                    const is_first = offset === 0;
+                    const is_last = offset_end >= aud.length;
+                    chunks.push({
+                        stride: [
+                            subarr.length,
+                            is_first ? 0 : stride,
+                            is_last ? 0 : stride
+                        ],
+                        input_features: feature.input_features,
+                        is_last,
+                    })
+                    if (is_last) break;
+                    offset += jump;
+                }
+
+            } else {
+                chunks = [{
+                    stride: [aud.length, 0, 0],
+                    input_features: (await this.processor(aud)).input_features,
+                    is_last: true
+                }]
+            }
+
+            // Generate for each set of input features
+            for (const chunk of chunks) {
+                generation_config.num_frames = Math.floor(chunk.stride[0] / hop_length);
+
+                // NOTE: doing sequentially for now
+                const data = await this.model.generate({
+                    inputs: chunk.input_features,
+                    ...generation_config
+                });
+
+                // TODO: Right now we only get top beam
+                if (return_timestamps === 'word') {
+                    // @ts-expect-error TS2339
+                    chunk.tokens = data.sequences.tolist()[0];
+                    // @ts-expect-error TS2339
+                    chunk.token_timestamps = data.token_timestamps.tolist()[0].map(
+                        (/** @type {number} */ x) => (0,_utils_maths_js__WEBPACK_IMPORTED_MODULE_6__.round)(x, 2)
+                    );
+
+                } else {
+                    chunk.tokens = (/** @type {Tensor} */(data))[0].tolist();
+                }
+
+                // convert stride to seconds
+                chunk.stride = chunk.stride.map(x => x / sampling_rate);
+            }
+
+            // Merge text chunks
+            // @ts-ignore
+            const [full_text, optional] = this.tokenizer._decode_asr(chunks, {
+                time_precision, return_timestamps, force_full_sequences
+            });
+
+            toReturn.push({ text: full_text, ...optional })
+        }
+        return single ? toReturn[0] : toReturn;
     }
-    const sampling_rate = this.processor.feature_extractor.config.sampling_rate;
-    const preparedAudios = await prepareAudios(audio, sampling_rate);
-    const toReturn = [];
-    for (const aud of preparedAudios) {
-      const inputs = await this.processor(aud);
 
-      // According to the [paper](https://huggingface.co/papers/2410.15608):
-      // "We use greedy decoding, with a heuristic limit of 6 output tokens
-      // per second of audio to avoid repeated output sequences."
-      const max_new_tokens = Math.floor(aud.length / sampling_rate) * 6;
-      const outputs = await this.model.generate({
-        max_new_tokens,
-        ...kwargs,
-        ...inputs,
-      });
+    /**
+     * @type {AutomaticSpeechRecognitionPipelineCallback}
+     * @private
+     */
+    async _call_moonshine(audio, kwargs) {
+        const single = !Array.isArray(audio);
+        if (single) {
+            audio = [/** @type {AudioInput} */ (audio)];
+        }
+        const sampling_rate = this.processor.feature_extractor.config.sampling_rate;
+        const preparedAudios = await prepareAudios(audio, sampling_rate);
+        const toReturn = [];
+        for (const aud of preparedAudios) {
+            const inputs = await this.processor(aud);
 
-      const text = this.processor.batch_decode(
-        /** @type {Tensor} */ (outputs),
-        { skip_special_tokens: true },
-      )[0];
-      toReturn.push({ text });
+            // According to the [paper](https://huggingface.co/papers/2410.15608):
+            // "We use greedy decoding, with a heuristic limit of 6 output tokens
+            // per second of audio to avoid repeated output sequences."
+            const max_new_tokens = Math.floor(aud.length / sampling_rate) * 6;
+            const outputs = await this.model.generate({ max_new_tokens, ...kwargs, ...inputs });
+
+            const text = this.processor.batch_decode(/** @type {Tensor} */(outputs), { skip_special_tokens: true })[0];
+            toReturn.push({ text });
+        }
+        return single ? toReturn[0] : toReturn;
     }
-    return single ? toReturn[0] : toReturn;
-  }
+
 }
 
 /**
@@ -23729,43 +23870,36 @@ class AutomaticSpeechRecognitionPipeline
  * // [{ generated_text: 'Mr. Brown commented icily.' }]
  * ```
  */
-class ImageToTextPipeline
-  extends /** @type {new (options: TextImagePipelineConstructorArgs) => ImageToTextPipelineType} */ (
-    Pipeline
-  )
-{
-  /**
-   * Create a new ImageToTextPipeline.
-   * @param {TextImagePipelineConstructorArgs} options An object used to instantiate the pipeline.
-   */
-  constructor(options) {
-    super(options);
-  }
+class ImageToTextPipeline extends (/** @type {new (options: TextImagePipelineConstructorArgs) => ImageToTextPipelineType} */ (Pipeline)) {
 
-  /** @type {ImageToTextPipelineCallback} */
-  async _call(images, generate_kwargs = {}) {
-    const isBatched = Array.isArray(images);
-    const preparedImages = await prepareImages(images);
-
-    const { pixel_values } = await this.processor(preparedImages);
-
-    const toReturn = [];
-    for (const batch of pixel_values) {
-      batch.dims = [1, ...batch.dims];
-      const output = await this.model.generate({
-        inputs: batch,
-        ...generate_kwargs,
-      });
-      const decoded = this.tokenizer
-        .batch_decode(/** @type {Tensor} */ (output), {
-          skip_special_tokens: true,
-        })
-        .map((x) => ({ generated_text: x.trim() }));
-      toReturn.push(decoded);
+    /**
+     * Create a new ImageToTextPipeline.
+     * @param {TextImagePipelineConstructorArgs} options An object used to instantiate the pipeline.
+     */
+    constructor(options) {
+        super(options);
     }
 
-    return isBatched ? toReturn : toReturn[0];
-  }
+    /** @type {ImageToTextPipelineCallback} */
+    async _call(images, generate_kwargs = {}) {
+
+        const isBatched = Array.isArray(images);
+        const preparedImages = await prepareImages(images);
+
+        const { pixel_values } = await this.processor(preparedImages);
+
+        const toReturn = [];
+        for (const batch of pixel_values) {
+            batch.dims = [1, ...batch.dims]
+            const output = await this.model.generate({ inputs: batch, ...generate_kwargs });
+            const decoded = this.tokenizer.batch_decode(/** @type {Tensor} */(output), {
+                skip_special_tokens: true,
+            }).map(x => ({ generated_text: x.trim() }))
+            toReturn.push(decoded);
+        }
+
+        return isBatched ? toReturn : toReturn[0];
+    }
 }
 
 /**
@@ -23825,49 +23959,51 @@ class ImageToTextPipeline
  * // ]
  * ```
  */
-class ImageClassificationPipeline
-  extends /** @type {new (options: ImagePipelineConstructorArgs) => ImageClassificationPipelineType} */ (
-    Pipeline
-  )
-{
-  /**
-   * Create a new ImageClassificationPipeline.
-   * @param {ImagePipelineConstructorArgs} options An object used to instantiate the pipeline.
-   */
-  constructor(options) {
-    super(options);
-  }
+class ImageClassificationPipeline extends (/** @type {new (options: ImagePipelineConstructorArgs) => ImageClassificationPipelineType} */ (Pipeline)) {
 
-  /** @type {ImageClassificationPipelineCallback} */
-  async _call(images, { top_k = 5 } = {}) {
-    const preparedImages = await prepareImages(images);
-
-    const { pixel_values } = await this.processor(preparedImages);
-    const output = await this.model({ pixel_values });
-
-    // @ts-expect-error TS2339
-    const id2label = this.model.config.id2label;
-
-    /** @type {ImageClassificationOutput[]} */
-    const toReturn = [];
-    for (const batch of output.logits) {
-      const scores = await (0,_utils_tensor_js__WEBPACK_IMPORTED_MODULE_8__.topk)(
-        new _utils_tensor_js__WEBPACK_IMPORTED_MODULE_8__.Tensor("float32", (0,_utils_maths_js__WEBPACK_IMPORTED_MODULE_6__.softmax)(batch.data), batch.dims),
-        top_k,
-      );
-
-      const values = scores[0].tolist();
-      const indices = scores[1].tolist();
-
-      const vals = indices.map((x, i) => ({
-        label: /** @type {string} */ (id2label ? id2label[x] : `LABEL_${x}`),
-        score: /** @type {number} */ (values[i]),
-      }));
-      toReturn.push(vals);
+    /**
+     * Create a new ImageClassificationPipeline.
+     * @param {ImagePipelineConstructorArgs} options An object used to instantiate the pipeline.
+     */
+    constructor(options) {
+        super(options);
     }
 
-    return Array.isArray(images) ? toReturn : toReturn[0];
-  }
+    /** @type {ImageClassificationPipelineCallback} */
+    async _call(images, {
+        top_k = 5
+    } = {}) {
+
+        const preparedImages = await prepareImages(images);
+
+        const { pixel_values } = await this.processor(preparedImages);
+        const output = await this.model({ pixel_values });
+
+        // @ts-expect-error TS2339
+        const id2label = this.model.config.id2label;
+
+        /** @type {ImageClassificationOutput[]} */
+        const toReturn = [];
+        for (const batch of output.logits) {
+            const scores = await (0,_utils_tensor_js__WEBPACK_IMPORTED_MODULE_8__.topk)(new _utils_tensor_js__WEBPACK_IMPORTED_MODULE_8__.Tensor(
+                'float32',
+                (0,_utils_maths_js__WEBPACK_IMPORTED_MODULE_6__.softmax)(batch.data),
+                batch.dims,
+            ), top_k);
+
+            const values = scores[0].tolist();
+            const indices = scores[1].tolist();
+
+            const vals = indices.map((x, i) => ({
+                label: /** @type {string} */ (id2label ? id2label[x] : `LABEL_${x}`),
+                score: /** @type {number} */ (values[i]),
+            }));
+            toReturn.push(vals);
+        }
+
+        return Array.isArray(images) ? toReturn : toReturn[0];
+    }
+
 }
 
 /**
@@ -23908,180 +24044,154 @@ class ImageClassificationPipeline
  * // ]
  * ```
  */
-class ImageSegmentationPipeline
-  extends /** @type {new (options: ImagePipelineConstructorArgs) => ImageSegmentationPipelineType} */ (
-    Pipeline
-  )
-{
-  /**
-   * Create a new ImageSegmentationPipeline.
-   * @param {ImagePipelineConstructorArgs} options An object used to instantiate the pipeline.
-   */
-  constructor(options) {
-    super(options);
+class ImageSegmentationPipeline extends (/** @type {new (options: ImagePipelineConstructorArgs) => ImageSegmentationPipelineType} */ (Pipeline)) {
+    /**
+     * Create a new ImageSegmentationPipeline.
+     * @param {ImagePipelineConstructorArgs} options An object used to instantiate the pipeline.
+     */
+    constructor(options) {
+        super(options);
 
-    this.subtasks_mapping = {
-      // Mapping of subtasks to their corresponding post-processing function names.
-      panoptic: "post_process_panoptic_segmentation",
-      instance: "post_process_instance_segmentation",
-      semantic: "post_process_semantic_segmentation",
-    };
-  }
-
-  /** @type {ImageSegmentationPipelineCallback} */
-  async _call(
-    images,
-    {
-      threshold = 0.5,
-      mask_threshold = 0.5,
-      overlap_mask_area_threshold = 0.8,
-      label_ids_to_fuse = null,
-      target_sizes = null,
-      subtask = null,
-    } = {},
-  ) {
-    const isBatched = Array.isArray(images);
-
-    if (isBatched && images.length !== 1) {
-      throw Error(
-        "Image segmentation pipeline currently only supports a batch size of 1.",
-      );
+        this.subtasks_mapping = {
+            // Mapping of subtasks to their corresponding post-processing function names.
+            panoptic: 'post_process_panoptic_segmentation',
+            instance: 'post_process_instance_segmentation',
+            semantic: 'post_process_semantic_segmentation'
+        }
     }
 
-    const preparedImages = await prepareImages(images);
-    const imageSizes = preparedImages.map((x) => [x.height, x.width]);
+    /** @type {ImageSegmentationPipelineCallback} */
+    async _call(images, {
+        threshold = 0.5,
+        mask_threshold = 0.5,
+        overlap_mask_area_threshold = 0.8,
+        label_ids_to_fuse = null,
+        target_sizes = null,
+        subtask = null,
+    } = {}) {
+        const isBatched = Array.isArray(images);
 
-    const inputs = await this.processor(preparedImages);
+        if (isBatched && images.length !== 1) {
+            throw Error("Image segmentation pipeline currently only supports a batch size of 1.");
+        }
 
-    const { inputNames, outputNames } = this.model.sessions["model"];
-    if (!inputNames.includes("pixel_values")) {
-      if (inputNames.length !== 1) {
-        throw Error(
-          `Expected a single input name, but got ${inputNames.length} inputs: ${inputNames}.`,
-        );
-      }
+        const preparedImages = await prepareImages(images);
+        const imageSizes = preparedImages.map(x => [x.height, x.width]);
 
-      const newName = inputNames[0];
-      if (newName in inputs) {
-        throw Error(`Input name ${newName} already exists in the inputs.`);
-      }
-      // To ensure compatibility with certain background-removal models,
-      // we may need to perform a mapping of input to output names
-      inputs[newName] = inputs.pixel_values;
+        const inputs = await this.processor(preparedImages);
+
+        const { inputNames, outputNames } = this.model.sessions['model'];
+        if (!inputNames.includes('pixel_values')) {
+            if (inputNames.length !== 1) {
+                throw Error(`Expected a single input name, but got ${inputNames.length} inputs: ${inputNames}.`);
+            }
+
+            const newName = inputNames[0];
+            if (newName in inputs) {
+                throw Error(`Input name ${newName} already exists in the inputs.`);
+            }
+            // To ensure compatibility with certain background-removal models,
+            // we may need to perform a mapping of input to output names
+            inputs[newName] = inputs.pixel_values;
+        }
+
+        const output = await this.model(inputs);
+
+        let fn = null;
+        if (subtask !== null) {
+            fn = this.subtasks_mapping[subtask];
+        } else if (this.processor.image_processor) {
+            for (const [task, func] of Object.entries(this.subtasks_mapping)) {
+                if (func in this.processor.image_processor) {
+                    fn = this.processor.image_processor[func].bind(this.processor.image_processor);
+                    subtask = task;
+                    break;
+                }
+            }
+        }
+
+        // @ts-expect-error TS2339
+        const id2label = this.model.config.id2label;
+
+        /** @type {ImageSegmentationPipelineOutput[]} */
+        const annotation = [];
+        if (!subtask) {
+            // We define an epsilon to safeguard against numerical/precision issues when detecting
+            // the normalization mode of the output (i.e., sigmoid already applied, or not).
+            // See https://github.com/microsoft/onnxruntime/issues/23943 for more information.
+            const epsilon = 1e-5;
+
+            // Perform standard image segmentation
+            const result = output[outputNames[0]];
+            for (let i = 0; i < imageSizes.length; ++i) {
+                const size = imageSizes[i];
+                const item = result[i];
+                if (item.data.some(x => x < -epsilon || x > 1 + epsilon)) {
+                    item.sigmoid_();
+                }
+                const mask = await _utils_image_js__WEBPACK_IMPORTED_MODULE_9__.RawImage.fromTensor(item.mul_(255).to('uint8')).resize(size[1], size[0]);
+                annotation.push({
+                    label: null,
+                    score: null,
+                    mask
+                });
+            }
+        } else if (subtask === 'panoptic' || subtask === 'instance') {
+            const processed = fn(
+                output,
+                threshold,
+                mask_threshold,
+                overlap_mask_area_threshold,
+                label_ids_to_fuse,
+                target_sizes ?? imageSizes, // TODO FIX?
+            )[0];
+
+            const segmentation = processed.segmentation;
+
+            for (const segment of processed.segments_info) {
+                const maskData = new Uint8ClampedArray(segmentation.data.length);
+                for (let i = 0; i < segmentation.data.length; ++i) {
+                    if (segmentation.data[i] === segment.id) {
+                        maskData[i] = 255;
+                    }
+                }
+
+                const mask = new _utils_image_js__WEBPACK_IMPORTED_MODULE_9__.RawImage(maskData, segmentation.dims[1], segmentation.dims[0], 1)
+
+                annotation.push({
+                    score: segment.score,
+                    label: id2label[segment.label_id],
+                    mask: mask
+                })
+            }
+
+        } else if (subtask === 'semantic') {
+            const { segmentation, labels } = fn(output, target_sizes ?? imageSizes)[0];
+
+            for (const label of labels) {
+                const maskData = new Uint8ClampedArray(segmentation.data.length);
+                for (let i = 0; i < segmentation.data.length; ++i) {
+                    if (segmentation.data[i] === label) {
+                        maskData[i] = 255;
+                    }
+                }
+
+                const mask = new _utils_image_js__WEBPACK_IMPORTED_MODULE_9__.RawImage(maskData, segmentation.dims[1], segmentation.dims[0], 1);
+
+                annotation.push({
+                    score: null,
+                    label: id2label[label],
+                    mask: mask
+                });
+            }
+        } else {
+            throw Error(`Subtask ${subtask} not supported.`);
+        }
+
+        return annotation;
     }
-
-    const output = await this.model(inputs);
-
-    let fn = null;
-    if (subtask !== null) {
-      fn = this.subtasks_mapping[subtask];
-    } else if (this.processor.image_processor) {
-      for (const [task, func] of Object.entries(this.subtasks_mapping)) {
-        if (func in this.processor.image_processor) {
-          fn = this.processor.image_processor[func].bind(
-            this.processor.image_processor,
-          );
-          subtask = task;
-          break;
-        }
-      }
-    }
-
-    // @ts-expect-error TS2339
-    const id2label = this.model.config.id2label;
-
-    /** @type {ImageSegmentationPipelineOutput[]} */
-    const annotation = [];
-    if (!subtask) {
-      // We define an epsilon to safeguard against numerical/precision issues when detecting
-      // the normalization mode of the output (i.e., sigmoid already applied, or not).
-      // See https://github.com/microsoft/onnxruntime/issues/23943 for more information.
-      const epsilon = 1e-5;
-
-      // Perform standard image segmentation
-      const result = output[outputNames[0]];
-      for (let i = 0; i < imageSizes.length; ++i) {
-        const size = imageSizes[i];
-        const item = result[i];
-        if (item.data.some((x) => x < -epsilon || x > 1 + epsilon)) {
-          item.sigmoid_();
-        }
-        const mask = await _utils_image_js__WEBPACK_IMPORTED_MODULE_9__.RawImage.fromTensor(
-          item.mul_(255).to("uint8"),
-        ).resize(size[1], size[0]);
-        annotation.push({
-          label: null,
-          score: null,
-          mask,
-        });
-      }
-    } else if (subtask === "panoptic" || subtask === "instance") {
-      const processed = fn(
-        output,
-        threshold,
-        mask_threshold,
-        overlap_mask_area_threshold,
-        label_ids_to_fuse,
-        target_sizes ?? imageSizes, // TODO FIX?
-      )[0];
-
-      const segmentation = processed.segmentation;
-
-      for (const segment of processed.segments_info) {
-        const maskData = new Uint8ClampedArray(segmentation.data.length);
-        for (let i = 0; i < segmentation.data.length; ++i) {
-          if (segmentation.data[i] === segment.id) {
-            maskData[i] = 255;
-          }
-        }
-
-        const mask = new _utils_image_js__WEBPACK_IMPORTED_MODULE_9__.RawImage(
-          maskData,
-          segmentation.dims[1],
-          segmentation.dims[0],
-          1,
-        );
-
-        annotation.push({
-          score: segment.score,
-          label: id2label[segment.label_id],
-          mask: mask,
-        });
-      }
-    } else if (subtask === "semantic") {
-      const { segmentation, labels } = fn(
-        output,
-        target_sizes ?? imageSizes,
-      )[0];
-
-      for (const label of labels) {
-        const maskData = new Uint8ClampedArray(segmentation.data.length);
-        for (let i = 0; i < segmentation.data.length; ++i) {
-          if (segmentation.data[i] === label) {
-            maskData[i] = 255;
-          }
-        }
-
-        const mask = new _utils_image_js__WEBPACK_IMPORTED_MODULE_9__.RawImage(
-          maskData,
-          segmentation.dims[1],
-          segmentation.dims[0],
-          1,
-        );
-
-        annotation.push({
-          score: null,
-          label: id2label[label],
-          mask: mask,
-        });
-      }
-    } else {
-      throw Error(`Subtask ${subtask} not supported.`);
-    }
-
-    return annotation;
-  }
 }
+
 
 /**
  * @typedef {Object} BackgroundRemovalPipelineOptions Parameters specific to image segmentation pipelines.
@@ -24108,41 +24218,35 @@ class ImageSegmentationPipeline
  * // ]
  * ```
  */
-class BackgroundRemovalPipeline
-  extends /** @type {new (options: ImagePipelineConstructorArgs) => BackgroundRemovalPipelineType} */ (
-    /** @type {any} */ (ImageSegmentationPipeline)
-  )
-{
-  /**
-   * Create a new BackgroundRemovalPipeline.
-   * @param {ImagePipelineConstructorArgs} options An object used to instantiate the pipeline.
-   */
-  constructor(options) {
-    super(options);
-  }
-
-  /** @type {BackgroundRemovalPipelineCallback} */
-  async _call(images, options = {}) {
-    const isBatched = Array.isArray(images);
-
-    if (isBatched && images.length !== 1) {
-      throw Error(
-        "Background removal pipeline currently only supports a batch size of 1.",
-      );
+class BackgroundRemovalPipeline extends (/** @type {new (options: ImagePipelineConstructorArgs) => BackgroundRemovalPipelineType} */ (/** @type {any} */(ImageSegmentationPipeline))) {
+    /**
+     * Create a new BackgroundRemovalPipeline.
+     * @param {ImagePipelineConstructorArgs} options An object used to instantiate the pipeline.
+     */
+    constructor(options) {
+        super(options);
     }
 
-    const preparedImages = await prepareImages(images);
+    /** @type {BackgroundRemovalPipelineCallback} */
+    async _call(images, options = {}) {
+        const isBatched = Array.isArray(images);
 
-    // @ts-expect-error TS2339
-    const masks = await super._call(images, options);
-    const result = preparedImages.map((img, i) => {
-      const cloned = img.clone();
-      cloned.putAlpha(masks[i].mask);
-      return cloned;
-    });
+        if (isBatched && images.length !== 1) {
+            throw Error("Background removal pipeline currently only supports a batch size of 1.");
+        }
 
-    return result;
-  }
+        const preparedImages = await prepareImages(images);
+
+        // @ts-expect-error TS2339
+        const masks = await super._call(images, options);
+        const result = preparedImages.map((img, i) => {
+            const cloned = img.clone();
+            cloned.putAlpha(masks[i].mask);
+            return cloned;
+        });
+
+        return result;
+    }
 }
 
 /**
@@ -24180,67 +24284,63 @@ class BackgroundRemovalPipeline
  * // ]
  * ```
  */
-class ZeroShotImageClassificationPipeline
-  extends /** @type {new (options: TextImagePipelineConstructorArgs) => ZeroShotImageClassificationPipelineType} */ (
-    Pipeline
-  )
-{
-  /**
-   * Create a new ZeroShotImageClassificationPipeline.
-   * @param {TextImagePipelineConstructorArgs} options An object used to instantiate the pipeline.
-   */
-  constructor(options) {
-    super(options);
-  }
-
-  /** @type {ZeroShotImageClassificationPipelineCallback} */
-  async _call(
-    images,
-    candidate_labels,
-    { hypothesis_template = "This is a photo of {}" } = {},
-  ) {
-    const isBatched = Array.isArray(images);
-    const preparedImages = await prepareImages(images);
-
-    // Insert label into hypothesis template
-    const texts = candidate_labels.map((x) =>
-      hypothesis_template.replace("{}", x),
-    );
-
-    // Run tokenization
-    const text_inputs = this.tokenizer(texts, {
-      padding: this.model.config.model_type === "siglip" ? "max_length" : true,
-      truncation: true,
-    });
-
-    // Run processor
-    const { pixel_values } = await this.processor(preparedImages);
-
-    // Run model with both text and pixel inputs
-    const output = await this.model({ ...text_inputs, pixel_values });
-
-    const function_to_apply =
-      this.model.config.model_type === "siglip"
-        ? (batch) => batch.sigmoid().data
-        : (batch) => (0,_utils_maths_js__WEBPACK_IMPORTED_MODULE_6__.softmax)(batch.data);
-
-    // Compare each image with each candidate label
-    const toReturn = [];
-    for (const batch of output.logits_per_image) {
-      // Compute softmax per image
-      const probs = function_to_apply(batch);
-
-      const result = [...probs].map((x, i) => ({
-        score: x,
-        label: candidate_labels[i],
-      }));
-      result.sort((a, b) => b.score - a.score); // sort by score in descending order
-      toReturn.push(result);
+class ZeroShotImageClassificationPipeline extends (/** @type {new (options: TextImagePipelineConstructorArgs) => ZeroShotImageClassificationPipelineType} */ (Pipeline)) {
+    /**
+     * Create a new ZeroShotImageClassificationPipeline.
+     * @param {TextImagePipelineConstructorArgs} options An object used to instantiate the pipeline.
+     */
+    constructor(options) {
+        super(options);
     }
 
-    return isBatched ? toReturn : toReturn[0];
-  }
+    /** @type {ZeroShotImageClassificationPipelineCallback} */
+    async _call(images, candidate_labels, {
+        hypothesis_template = "This is a photo of {}"
+    } = {}) {
+
+        const isBatched = Array.isArray(images);
+        const preparedImages = await prepareImages(images);
+
+        // Insert label into hypothesis template
+        const texts = candidate_labels.map(
+            x => hypothesis_template.replace('{}', x)
+        );
+
+        // Run tokenization
+        const text_inputs = this.tokenizer(texts, {
+            padding: this.model.config.model_type === 'siglip' ? 'max_length' : true,
+            truncation: true,
+        });
+
+        // Run processor
+        const { pixel_values } = await this.processor(preparedImages);
+
+        // Run model with both text and pixel inputs
+        const output = await this.model({ ...text_inputs, pixel_values });
+
+        const function_to_apply =
+            this.model.config.model_type === 'siglip'
+                ? batch => batch.sigmoid().data
+                : batch => (0,_utils_maths_js__WEBPACK_IMPORTED_MODULE_6__.softmax)(batch.data);
+
+        // Compare each image with each candidate label
+        const toReturn = [];
+        for (const batch of output.logits_per_image) {
+            // Compute softmax per image
+            const probs = function_to_apply(batch);
+
+            const result = [...probs].map((x, i) => ({
+                score: x,
+                label: candidate_labels[i]
+            }));
+            result.sort((a, b) => b.score - a.score); // sort by score in descending order
+            toReturn.push(result);
+        }
+
+        return isBatched ? toReturn : toReturn[0];
+    }
 }
+
 
 /**
  * @typedef {Object} ObjectDetectionPipelineSingle
@@ -24283,62 +24383,55 @@ class ZeroShotImageClassificationPipeline
  * // }]
  * ```
  */
-class ObjectDetectionPipeline
-  extends /** @type {new (options: ImagePipelineConstructorArgs) => ObjectDetectionPipelineType} */ (
-    Pipeline
-  )
-{
-  /**
-   * Create a new ObjectDetectionPipeline.
-   * @param {ImagePipelineConstructorArgs} options An object used to instantiate the pipeline.
-   */
-  constructor(options) {
-    super(options);
-  }
+class ObjectDetectionPipeline extends (/** @type {new (options: ImagePipelineConstructorArgs) => ObjectDetectionPipelineType} */ (Pipeline)) {
 
-  /** @type {ObjectDetectionPipelineCallback} */
-  async _call(images, { threshold = 0.9, percentage = false } = {}) {
-    const isBatched = Array.isArray(images);
-
-    if (isBatched && images.length !== 1) {
-      throw Error(
-        "Object detection pipeline currently only supports a batch size of 1.",
-      );
+    /**
+     * Create a new ObjectDetectionPipeline.
+     * @param {ImagePipelineConstructorArgs} options An object used to instantiate the pipeline.
+     */
+    constructor(options) {
+        super(options);
     }
-    const preparedImages = await prepareImages(images);
 
-    const imageSizes = percentage
-      ? null
-      : preparedImages.map((x) => [x.height, x.width]);
+    /** @type {ObjectDetectionPipelineCallback} */
+    async _call(images, {
+        threshold = 0.9,
+        percentage = false,
+    } = {}) {
 
-    const { pixel_values, pixel_mask } = await this.processor(preparedImages);
-    const output = await this.model({ pixel_values, pixel_mask });
+        const isBatched = Array.isArray(images);
 
-    // @ts-ignore
-    const processed =
-      this.processor.image_processor.post_process_object_detection(
-        output,
-        threshold,
-        imageSizes,
-      );
+        if (isBatched && images.length !== 1) {
+            throw Error("Object detection pipeline currently only supports a batch size of 1.");
+        }
+        const preparedImages = await prepareImages(images);
 
-    // Add labels
-    // @ts-expect-error TS2339
-    const id2label = this.model.config.id2label;
+        const imageSizes = percentage ? null : preparedImages.map(x => [x.height, x.width]);
 
-    // Format output
-    /** @type {ObjectDetectionPipelineOutput[]} */
-    const result = processed.map((batch) =>
-      batch.boxes.map((box, i) => ({
-        score: batch.scores[i],
-        label: id2label[batch.classes[i]],
-        box: get_bounding_box(box, !percentage),
-      })),
-    );
+        const { pixel_values, pixel_mask } = await this.processor(preparedImages);
+        const output = await this.model({ pixel_values, pixel_mask });
 
-    return isBatched ? result : result[0];
-  }
+        // @ts-ignore
+        const processed = this.processor.image_processor.post_process_object_detection(output, threshold, imageSizes);
+
+        // Add labels
+        // @ts-expect-error TS2339
+        const id2label = this.model.config.id2label;
+
+        // Format output
+        /** @type {ObjectDetectionPipelineOutput[]} */
+        const result = processed.map(batch => (
+            batch.boxes.map((box, i) => ({
+                score: batch.scores[i],
+                label: id2label[batch.classes[i]],
+                box: get_bounding_box(box, !percentage),
+            }))
+        ))
+
+        return isBatched ? result : result[0];
+    }
 }
+
 
 /**
  * @typedef {Object} ZeroShotObjectDetectionOutput
@@ -24426,92 +24519,84 @@ class ObjectDetectionPipeline
  * // ]
  * ```
  */
-class ZeroShotObjectDetectionPipeline
-  extends /** @type {new (options: TextImagePipelineConstructorArgs) => ZeroShotObjectDetectionPipelineType} */ (
-    Pipeline
-  )
-{
-  /**
-   * Create a new ZeroShotObjectDetectionPipeline.
-   * @param {TextImagePipelineConstructorArgs} options An object used to instantiate the pipeline.
-   */
-  constructor(options) {
-    super(options);
-  }
+class ZeroShotObjectDetectionPipeline extends (/** @type {new (options: TextImagePipelineConstructorArgs) => ZeroShotObjectDetectionPipelineType} */ (Pipeline)) {
 
-  /** @type {ZeroShotObjectDetectionPipelineCallback} */
-  async _call(
-    images,
-    candidate_labels,
-    { threshold = 0.1, top_k = null, percentage = false } = {},
-  ) {
-    const isBatched = Array.isArray(images);
-    const preparedImages = await prepareImages(images);
-
-    // Run tokenization
-    const text_inputs = this.tokenizer(candidate_labels, {
-      padding: true,
-      truncation: true,
-    });
-
-    // Run processor
-    const model_inputs = await this.processor(preparedImages);
-
-    // Since non-maximum suppression is performed for exporting, we need to
-    // process each image separately. For more information, see:
-    // https://github.com/huggingface/optimum/blob/e3b7efb1257c011db907ef40ab340e795cc5684c/optimum/exporters/onnx/model_configs.py#L1028-L1032
-    const toReturn = [];
-    for (let i = 0; i < preparedImages.length; ++i) {
-      const image = preparedImages[i];
-      const imageSize = percentage ? null : [[image.height, image.width]];
-      const pixel_values = model_inputs.pixel_values[i].unsqueeze_(0);
-
-      // Run model with both text and pixel inputs
-      const output = await this.model({ ...text_inputs, pixel_values });
-
-      let result;
-      if ("post_process_grounded_object_detection" in this.processor) {
-        // @ts-ignore
-        const processed = this.processor.post_process_grounded_object_detection(
-          output,
-          text_inputs.input_ids,
-          {
-            // TODO: support separate threshold values
-            box_threshold: threshold,
-            text_threshold: threshold,
-            target_sizes: imageSize,
-          },
-        )[0];
-        result = processed.boxes.map((box, i) => ({
-          score: processed.scores[i],
-          label: processed.labels[i],
-          box: get_bounding_box(box, !percentage),
-        }));
-      } else {
-        // @ts-ignore
-        const processed =
-          this.processor.image_processor.post_process_object_detection(
-            output,
-            threshold,
-            imageSize,
-            true,
-          )[0];
-        result = processed.boxes.map((box, i) => ({
-          score: processed.scores[i],
-          label: candidate_labels[processed.classes[i]],
-          box: get_bounding_box(box, !percentage),
-        }));
-      }
-      result.sort((a, b) => b.score - a.score);
-
-      if (top_k !== null) {
-        result = result.slice(0, top_k);
-      }
-      toReturn.push(result);
+    /**
+     * Create a new ZeroShotObjectDetectionPipeline.
+     * @param {TextImagePipelineConstructorArgs} options An object used to instantiate the pipeline.
+     */
+    constructor(options) {
+        super(options);
     }
 
-    return isBatched ? toReturn : toReturn[0];
-  }
+    /** @type {ZeroShotObjectDetectionPipelineCallback} */
+    async _call(images, candidate_labels, {
+        threshold = 0.1,
+        top_k = null,
+        percentage = false,
+    } = {}) {
+
+        const isBatched = Array.isArray(images);
+        const preparedImages = await prepareImages(images);
+
+        // Run tokenization
+        const text_inputs = this.tokenizer(candidate_labels, {
+            padding: true,
+            truncation: true,
+        });
+
+        // Run processor
+        const model_inputs = await this.processor(preparedImages);
+
+        // Since non-maximum suppression is performed for exporting, we need to
+        // process each image separately. For more information, see:
+        // https://github.com/huggingface/optimum/blob/e3b7efb1257c011db907ef40ab340e795cc5684c/optimum/exporters/onnx/model_configs.py#L1028-L1032
+        const toReturn = [];
+        for (let i = 0; i < preparedImages.length; ++i) {
+            const image = preparedImages[i];
+            const imageSize = percentage ? null : [[image.height, image.width]];
+            const pixel_values = model_inputs.pixel_values[i].unsqueeze_(0);
+
+            // Run model with both text and pixel inputs
+            const output = await this.model({ ...text_inputs, pixel_values });
+
+            let result;
+            if ('post_process_grounded_object_detection' in this.processor) {
+                // @ts-ignore
+                const processed = this.processor.post_process_grounded_object_detection(
+                    output,
+                    text_inputs.input_ids,
+                    {
+                        // TODO: support separate threshold values
+                        box_threshold: threshold,
+                        text_threshold: threshold,
+                        target_sizes: imageSize,
+                    },
+                )[0];
+                result = processed.boxes.map((box, i) => ({
+                    score: processed.scores[i],
+                    label: processed.labels[i],
+                    box: get_bounding_box(box, !percentage),
+                }))
+            } else {
+                // @ts-ignore
+                const processed = this.processor.image_processor.post_process_object_detection(output, threshold, imageSize, true)[0];
+                result = processed.boxes.map((box, i) => ({
+                    score: processed.scores[i],
+                    label: candidate_labels[processed.classes[i]],
+                    box: get_bounding_box(box, !percentage),
+                }))
+            }
+            result.sort((a, b) => b.score - a.score);
+
+            if (top_k !== null) {
+                result = result.slice(0, top_k);
+            }
+            toReturn.push(result)
+        }
+
+        return isBatched ? toReturn : toReturn[0];
+    }
 }
 
 /**
@@ -24542,58 +24627,55 @@ class ZeroShotObjectDetectionPipeline
  * // [{ answer: 'us-001' }]
  * ```
  */
-class DocumentQuestionAnsweringPipeline
-  extends /** @type {new (options: TextImagePipelineConstructorArgs) => DocumentQuestionAnsweringPipelineType} */ (
-    Pipeline
-  )
-{
-  /**
-   * Create a new DocumentQuestionAnsweringPipeline.
-   * @param {TextImagePipelineConstructorArgs} options An object used to instantiate the pipeline.
-   */
-  constructor(options) {
-    super(options);
-  }
+class DocumentQuestionAnsweringPipeline extends (/** @type {new (options: TextImagePipelineConstructorArgs) => DocumentQuestionAnsweringPipelineType} */ (Pipeline)) {
 
-  /** @type {DocumentQuestionAnsweringPipelineCallback} */
-  async _call(image, question, generate_kwargs = {}) {
-    // NOTE: For now, we only support a batch size of 1
-
-    // Preprocess image
-    const preparedImage = (await prepareImages(image))[0];
-    const { pixel_values } = await this.processor(preparedImage);
-
-    // Run tokenization
-    const task_prompt = `<s_docvqa><s_question>${question}</s_question><s_answer>`;
-    const decoder_input_ids = this.tokenizer(task_prompt, {
-      add_special_tokens: false,
-      padding: true,
-      truncation: true,
-    }).input_ids;
-
-    // Run model
-    const output = await this.model.generate({
-      inputs: pixel_values,
-      // @ts-expect-error TS2339
-      max_length: this.model.config.decoder.max_position_embeddings,
-      decoder_input_ids,
-      ...generate_kwargs,
-    });
-
-    // Decode output
-    const decoded = this.tokenizer.batch_decode(
-      /** @type {Tensor} */ (output),
-    )[0];
-
-    // Parse answer
-    const match = decoded.match(/<s_answer>(.*?)<\/s_answer>/);
-    let answer = null;
-    if (match && match.length >= 2) {
-      answer = match[1].trim();
+    /**
+     * Create a new DocumentQuestionAnsweringPipeline.
+     * @param {TextImagePipelineConstructorArgs} options An object used to instantiate the pipeline.
+     */
+    constructor(options) {
+        super(options);
     }
-    return [{ answer }];
-  }
+
+    /** @type {DocumentQuestionAnsweringPipelineCallback} */
+    async _call(image, question, generate_kwargs = {}) {
+
+        // NOTE: For now, we only support a batch size of 1
+
+        // Preprocess image
+        const preparedImage = (await prepareImages(image))[0];
+        const { pixel_values } = await this.processor(preparedImage);
+
+        // Run tokenization
+        const task_prompt = `<s_docvqa><s_question>${question}</s_question><s_answer>`;
+        const decoder_input_ids = this.tokenizer(task_prompt, {
+            add_special_tokens: false,
+            padding: true,
+            truncation: true,
+        }).input_ids;
+
+        // Run model
+        const output = await this.model.generate({
+            inputs: pixel_values,
+            // @ts-expect-error TS2339
+            max_length: this.model.config.decoder.max_position_embeddings,
+            decoder_input_ids,
+            ...generate_kwargs,
+        });
+
+        // Decode output
+        const decoded = this.tokenizer.batch_decode(/** @type {Tensor} */(output))[0];
+
+        // Parse answer
+        const match = decoded.match(/<s_answer>(.*?)<\/s_answer>/);
+        let answer = null;
+        if (match && match.length >= 2) {
+            answer = match[1].trim();
+        }
+        return [{ answer }];
+    }
 }
+
 
 /**
  * @typedef {Object} VocoderOptions
@@ -24608,6 +24690,9 @@ class DocumentQuestionAnsweringPipeline
  *
  * @typedef {Object} TextToAudioPipelineOptions Parameters specific to text-to-audio pipelines.
  * @property {Tensor|Float32Array|string|URL} [speaker_embeddings=null] The speaker embeddings (if the model requires it).
+ * @property {number} [num_inference_steps] The number of denoising steps (if the model supports it).
+ * More denoising steps usually lead to higher quality audio but slower inference.
+ * @property {number} [speed] The speed of the generated audio (if the model supports it).
  *
  * @callback TextToAudioPipelineCallback Generates speech/audio from the inputs.
  * @param {string|string[]} texts The text(s) to generate.
@@ -24621,130 +24706,159 @@ class DocumentQuestionAnsweringPipeline
  * Text-to-audio generation pipeline using any `AutoModelForTextToWaveform` or `AutoModelForTextToSpectrogram`.
  * This pipeline generates an audio file from an input text and optional other conditional inputs.
  *
- * **Example:** Generate audio from text with `Xenova/speecht5_tts`.
+ * **Example:** Generate audio from text with `onnx-community/Supertonic-TTS-ONNX`.
  * ```javascript
- * const synthesizer = await pipeline('text-to-speech', 'Xenova/speecht5_tts', { quantized: false });
- * const speaker_embeddings = 'https://huggingface.co/datasets/Xenova/transformers.js-docs/resolve/main/speaker_embeddings.bin';
- * const out = await synthesizer('Hello, my dog is cute', { speaker_embeddings });
+ * const synthesizer = await pipeline('text-to-speech', 'onnx-community/Supertonic-TTS-ONNX');
+ * const speaker_embeddings = 'https://huggingface.co/onnx-community/Supertonic-TTS-ONNX/resolve/main/voices/F1.bin';
+ * const output = await synthesizer('Hello there, how are you doing?', { speaker_embeddings });
  * // RawAudio {
- * //   audio: Float32Array(26112) [-0.00005657337896991521, 0.00020583874720614403, ...],
- * //   sampling_rate: 16000
+ * //   audio: Float32Array(95232) [-0.000482565927086398, -0.0004853440332226455, ...],
+ * //   sampling_rate: 44100
  * // }
- * ```
- *
- * You can then save the audio to a .wav file with the `wavefile` package:
- * ```javascript
- * import wavefile from 'wavefile';
- * import fs from 'fs';
- *
- * const wav = new wavefile.WaveFile();
- * wav.fromScratch(1, out.sampling_rate, '32f', out.audio);
- * fs.writeFileSync('out.wav', wav.toBuffer());
+ * 
+ * // Optional: Save the audio to a .wav file or Blob
+ * await output.save('output.wav'); // You can also use `output.toBlob()` to access the audio as a Blob
  * ```
  *
  * **Example:** Multilingual speech generation with `Xenova/mms-tts-fra`. See [here](https://huggingface.co/models?pipeline_tag=text-to-speech&other=vits&sort=trending) for the full list of available languages (1107).
  * ```javascript
  * const synthesizer = await pipeline('text-to-speech', 'Xenova/mms-tts-fra');
- * const out = await synthesizer('Bonjour');
+ * const output = await synthesizer('Bonjour');
  * // RawAudio {
  * //   audio: Float32Array(23808) [-0.00037693005288019776, 0.0003325853613205254, ...],
  * //   sampling_rate: 16000
  * // }
  * ```
  */
-class TextToAudioPipeline
-  extends /** @type {new (options: TextToAudioPipelineConstructorArgs) => TextToAudioPipelineType} */ (
-    Pipeline
-  )
-{
-  DEFAULT_VOCODER_ID = "Xenova/speecht5_hifigan";
+class TextToAudioPipeline extends (/** @type {new (options: TextToAudioPipelineConstructorArgs) => TextToAudioPipelineType} */ (Pipeline)) {
+    DEFAULT_VOCODER_ID = "Xenova/speecht5_hifigan"
 
-  /**
-   * Create a new TextToAudioPipeline.
-   * @param {TextToAudioPipelineConstructorArgs} options An object used to instantiate the pipeline.
-   */
-  constructor(options) {
-    super(options);
+    /**
+     * Create a new TextToAudioPipeline.
+     * @param {TextToAudioPipelineConstructorArgs} options An object used to instantiate the pipeline.
+     */
+    constructor(options) {
+        super(options);
 
-    // TODO: Find a better way for `pipeline` to set the default vocoder
-    this.vocoder = options.vocoder ?? null;
-  }
-
-  /** @type {TextToAudioPipelineCallback} */
-  async _call(text_inputs, { speaker_embeddings = null } = {}) {
-    // If this.processor is not set, we are using a `AutoModelForTextToWaveform` model
-    if (this.processor) {
-      return this._call_text_to_spectrogram(text_inputs, {
-        speaker_embeddings,
-      });
-    } else {
-      return this._call_text_to_waveform(text_inputs);
-    }
-  }
-
-  async _call_text_to_waveform(text_inputs) {
-    // Run tokenization
-    const inputs = this.tokenizer(text_inputs, {
-      padding: true,
-      truncation: true,
-    });
-
-    // Generate waveform
-    const { waveform } = await this.model(inputs);
-
-    // @ts-expect-error TS2339
-    const sampling_rate = this.model.config.sampling_rate;
-    return new _utils_audio_js__WEBPACK_IMPORTED_MODULE_7__.RawAudio(waveform.data, sampling_rate);
-  }
-
-  async _call_text_to_spectrogram(text_inputs, { speaker_embeddings }) {
-    // Load vocoder, if not provided
-    if (!this.vocoder) {
-      console.log("No vocoder specified, using default HifiGan vocoder.");
-      this.vocoder = await _models_js__WEBPACK_IMPORTED_MODULE_1__.AutoModel.from_pretrained(this.DEFAULT_VOCODER_ID, {
-        dtype: "fp32",
-      });
+        // TODO: Find a better way for `pipeline` to set the default vocoder
+        this.vocoder = options.vocoder ?? null;
     }
 
-    // Load speaker embeddings as Float32Array from path/URL
-    if (
-      typeof speaker_embeddings === "string" ||
-      speaker_embeddings instanceof URL
-    ) {
-      // Load from URL with fetch
-      speaker_embeddings = new Float32Array(
-        await (await fetch(speaker_embeddings)).arrayBuffer(),
-      );
+    async _prepare_speaker_embeddings(speaker_embeddings) {
+        // Load speaker embeddings as Float32Array from path/URL
+        if (typeof speaker_embeddings === 'string' || speaker_embeddings instanceof URL) {
+            // Load from URL with fetch
+            speaker_embeddings = new Float32Array(
+                await (await fetch(speaker_embeddings)).arrayBuffer()
+            );
+        }
+
+        if (speaker_embeddings instanceof Float32Array) {
+            speaker_embeddings = new _utils_tensor_js__WEBPACK_IMPORTED_MODULE_8__.Tensor(
+                'float32',
+                speaker_embeddings,
+                [speaker_embeddings.length]
+            )
+        } else if (!(speaker_embeddings instanceof _utils_tensor_js__WEBPACK_IMPORTED_MODULE_8__.Tensor)) {
+            throw new Error("Speaker embeddings must be a `Tensor`, `Float32Array`, `string`, or `URL`.")
+        }
+
+        return speaker_embeddings;
     }
 
-    if (speaker_embeddings instanceof Float32Array) {
-      speaker_embeddings = new _utils_tensor_js__WEBPACK_IMPORTED_MODULE_8__.Tensor("float32", speaker_embeddings, [
-        1,
-        speaker_embeddings.length,
-      ]);
-    } else if (!(speaker_embeddings instanceof _utils_tensor_js__WEBPACK_IMPORTED_MODULE_8__.Tensor)) {
-      throw new Error(
-        "Speaker embeddings must be a `Tensor`, `Float32Array`, `string`, or `URL`.",
-      );
+    /** @type {TextToAudioPipelineCallback} */
+    async _call(text_inputs, {
+        speaker_embeddings = null,
+        num_inference_steps,
+        speed,
+    } = {}) {
+
+        // If this.processor is not set, we are using a `AutoModelForTextToWaveform` model
+        if (this.processor) {
+            return this._call_text_to_spectrogram(text_inputs, { speaker_embeddings });
+        } else if (
+            this.model.config.model_type === "supertonic"
+        ) {
+            return this._call_supertonic(text_inputs, { speaker_embeddings, num_inference_steps, speed });
+        } else {
+            return this._call_text_to_waveform(text_inputs);
+        }
     }
 
-    // Run tokenization
-    const { input_ids } = this.tokenizer(text_inputs, {
-      padding: true,
-      truncation: true,
-    });
+    async _call_supertonic(text_inputs, { speaker_embeddings, num_inference_steps, speed }) {
+        if (!speaker_embeddings) {
+            throw new Error("Speaker embeddings must be provided for Supertonic models.");
+        }
+        speaker_embeddings = await this._prepare_speaker_embeddings(speaker_embeddings);
 
-    // NOTE: At this point, we are guaranteed that `speaker_embeddings` is a `Tensor`
-    // @ts-ignore
-    const { waveform } = await this.model.generate_speech(
-      input_ids,
-      speaker_embeddings,
-      { vocoder: this.vocoder },
-    );
+        // @ts-expect-error TS2339
+        const { sampling_rate, style_dim } = this.model.config;
 
-    const sampling_rate = this.processor.feature_extractor.config.sampling_rate;
-    return new _utils_audio_js__WEBPACK_IMPORTED_MODULE_7__.RawAudio(waveform.data, sampling_rate);
-  }
+        speaker_embeddings = (/** @type {Tensor} */ (speaker_embeddings)).view(1, -1, style_dim);
+        const inputs = this.tokenizer(text_inputs, {
+            padding: true,
+            truncation: true,
+        });
+
+        // @ts-expect-error TS2339
+        const { waveform } = await this.model.generate_speech({
+            ...inputs,
+            style: speaker_embeddings,
+            num_inference_steps,
+            speed,
+        });
+
+        return new _utils_audio_js__WEBPACK_IMPORTED_MODULE_7__.RawAudio(
+            waveform.data,
+            sampling_rate,
+        )
+    }
+
+    async _call_text_to_waveform(text_inputs) {
+
+        // Run tokenization
+        const inputs = this.tokenizer(text_inputs, {
+            padding: true,
+            truncation: true,
+        });
+
+        // Generate waveform
+        const { waveform } = await this.model(inputs);
+
+        // @ts-expect-error TS2339
+        const sampling_rate = this.model.config.sampling_rate;
+        return new _utils_audio_js__WEBPACK_IMPORTED_MODULE_7__.RawAudio(
+            waveform.data,
+            sampling_rate,
+        )
+    }
+
+    async _call_text_to_spectrogram(text_inputs, { speaker_embeddings }) {
+
+        // Load vocoder, if not provided
+        if (!this.vocoder) {
+            console.log('No vocoder specified, using default HifiGan vocoder.');
+            this.vocoder = await _models_js__WEBPACK_IMPORTED_MODULE_1__.AutoModel.from_pretrained(this.DEFAULT_VOCODER_ID, { dtype: 'fp32' });
+        }
+
+        // Run tokenization
+        const { input_ids } = this.tokenizer(text_inputs, {
+            padding: true,
+            truncation: true,
+        });
+
+        speaker_embeddings = await this._prepare_speaker_embeddings(speaker_embeddings);
+        speaker_embeddings = speaker_embeddings.view(1, -1);
+
+        // @ts-expect-error TS2339
+        const { waveform } = await this.model.generate_speech(input_ids, speaker_embeddings, { vocoder: this.vocoder });
+
+        const sampling_rate = this.processor.feature_extractor.config.sampling_rate;
+        return new _utils_audio_js__WEBPACK_IMPORTED_MODULE_7__.RawAudio(
+            waveform.data,
+            sampling_rate,
+        )
+    }
 }
 
 /**
@@ -24771,39 +24885,31 @@ class TextToAudioPipeline
  * // }
  * ```
  */
-class ImageToImagePipeline
-  extends /** @type {new (options: ImagePipelineConstructorArgs) => ImageToImagePipelineType} */ (
-    Pipeline
-  )
-{
-  /**
-   * Create a new ImageToImagePipeline.
-   * @param {ImagePipelineConstructorArgs} options An object used to instantiate the pipeline.
-   */
-  constructor(options) {
-    super(options);
-  }
-
-  /** @type {ImageToImagePipelineCallback} */
-  async _call(images) {
-    const preparedImages = await prepareImages(images);
-    const inputs = await this.processor(preparedImages);
-    const outputs = await this.model(inputs);
-
-    /** @type {RawImage[]} */
-    const toReturn = [];
-    for (const batch of outputs.reconstruction) {
-      const output = batch
-        .squeeze()
-        .clamp_(0, 1)
-        .mul_(255)
-        .round_()
-        .to("uint8");
-      toReturn.push(_utils_image_js__WEBPACK_IMPORTED_MODULE_9__.RawImage.fromTensor(output));
+class ImageToImagePipeline extends (/** @type {new (options: ImagePipelineConstructorArgs) => ImageToImagePipelineType} */ (Pipeline)) {
+    /**
+     * Create a new ImageToImagePipeline.
+     * @param {ImagePipelineConstructorArgs} options An object used to instantiate the pipeline.
+     */
+    constructor(options) {
+        super(options);
     }
 
-    return toReturn.length > 1 ? toReturn : toReturn[0];
-  }
+    /** @type {ImageToImagePipelineCallback} */
+    async _call(images) {
+
+        const preparedImages = await prepareImages(images);
+        const inputs = await this.processor(preparedImages);
+        const outputs = await this.model(inputs);
+
+        /** @type {RawImage[]} */
+        const toReturn = [];
+        for (const batch of outputs.reconstruction) {
+            const output = batch.squeeze().clamp_(0, 1).mul_(255).round_().to('uint8');
+            toReturn.push(_utils_image_js__WEBPACK_IMPORTED_MODULE_9__.RawImage.fromTensor(output));
+        }
+
+        return toReturn.length > 1 ? toReturn : toReturn[0];
+    }
 }
 
 /**
@@ -24842,373 +24948,356 @@ class ImageToImagePipeline
  * // }
  * ```
  */
-class DepthEstimationPipeline
-  extends /** @type {new (options: ImagePipelineConstructorArgs) => DepthEstimationPipelineType} */ (
-    Pipeline
-  )
-{
-  /**
-   * Create a new DepthEstimationPipeline.
-   * @param {ImagePipelineConstructorArgs} options An object used to instantiate the pipeline.
-   */
-  constructor(options) {
-    super(options);
-  }
-
-  /** @type {DepthEstimationPipelineCallback} */
-  async _call(images) {
-    const preparedImages = await prepareImages(images);
-
-    const inputs = await this.processor(preparedImages);
-    const { predicted_depth } = await this.model(inputs);
-
-    const toReturn = [];
-    for (let i = 0; i < preparedImages.length; ++i) {
-      const batch = predicted_depth[i];
-      const [height, width] = batch.dims.slice(-2);
-      const [new_width, new_height] = preparedImages[i].size;
-
-      // Interpolate to original size
-      const prediction = (
-        await (0,_utils_tensor_js__WEBPACK_IMPORTED_MODULE_8__.interpolate_4d)(batch.view(1, 1, height, width), {
-          size: [new_height, new_width],
-          mode: "bilinear",
-        })
-      ).view(new_height, new_width);
-
-      const minval = /** @type {number} */ (prediction.min().item());
-      const maxval = /** @type {number} */ (prediction.max().item());
-      const formatted = prediction
-        .sub(minval)
-        .div_(maxval - minval)
-        .mul_(255)
-        .to("uint8")
-        .unsqueeze(0);
-      const depth = _utils_image_js__WEBPACK_IMPORTED_MODULE_9__.RawImage.fromTensor(formatted);
-      toReturn.push({
-        predicted_depth: prediction,
-        depth,
-      });
+class DepthEstimationPipeline extends (/** @type {new (options: ImagePipelineConstructorArgs) => DepthEstimationPipelineType} */ (Pipeline)) {
+    /**
+     * Create a new DepthEstimationPipeline.
+     * @param {ImagePipelineConstructorArgs} options An object used to instantiate the pipeline.
+     */
+    constructor(options) {
+        super(options);
     }
 
-    return toReturn.length > 1 ? toReturn : toReturn[0];
-  }
+    /** @type {DepthEstimationPipelineCallback} */
+    async _call(images) {
+
+        const preparedImages = await prepareImages(images);
+
+        const inputs = await this.processor(preparedImages);
+        const { predicted_depth } = await this.model(inputs);
+
+        const toReturn = [];
+        for (let i = 0; i < preparedImages.length; ++i) {
+            const batch = predicted_depth[i];
+            const [height, width] = batch.dims.slice(-2);
+            const [new_width, new_height] = preparedImages[i].size;
+
+            // Interpolate to original size
+            const prediction = (await (0,_utils_tensor_js__WEBPACK_IMPORTED_MODULE_8__.interpolate_4d)(batch.view(1, 1, height, width), {
+                size: [new_height, new_width],
+                mode: 'bilinear',
+            })).view(new_height, new_width);
+
+            const minval = /** @type {number} */(prediction.min().item());
+            const maxval = /** @type {number} */(prediction.max().item());
+            const formatted = prediction.sub(minval).div_(maxval - minval).mul_(255).to('uint8').unsqueeze(0);
+            const depth = _utils_image_js__WEBPACK_IMPORTED_MODULE_9__.RawImage.fromTensor(formatted);
+            toReturn.push({
+                predicted_depth: prediction,
+                depth,
+            });
+        }
+
+        return toReturn.length > 1 ? toReturn : toReturn[0];
+    }
 }
 
 const SUPPORTED_TASKS = Object.freeze({
-  "text-classification": {
-    tokenizer: _tokenizers_js__WEBPACK_IMPORTED_MODULE_0__.AutoTokenizer,
-    pipeline: TextClassificationPipeline,
-    model: _models_js__WEBPACK_IMPORTED_MODULE_1__.AutoModelForSequenceClassification,
-    default: {
-      // TODO: replace with original
-      // "model": "distilbert-base-uncased-finetuned-sst-2-english",
-      model: "Xenova/distilbert-base-uncased-finetuned-sst-2-english",
+    "text-classification": {
+        "tokenizer": _tokenizers_js__WEBPACK_IMPORTED_MODULE_0__.AutoTokenizer,
+        "pipeline": TextClassificationPipeline,
+        "model": _models_js__WEBPACK_IMPORTED_MODULE_1__.AutoModelForSequenceClassification,
+        "default": {
+            // TODO: replace with original
+            // "model": "distilbert-base-uncased-finetuned-sst-2-english",
+            "model": "Xenova/distilbert-base-uncased-finetuned-sst-2-english",
+        },
+        "type": "text",
     },
-    type: "text",
-  },
-  "token-classification": {
-    tokenizer: _tokenizers_js__WEBPACK_IMPORTED_MODULE_0__.AutoTokenizer,
-    pipeline: TokenClassificationPipeline,
-    model: _models_js__WEBPACK_IMPORTED_MODULE_1__.AutoModelForTokenClassification,
-    default: {
-      // TODO: replace with original
-      // "model": "Davlan/bert-base-multilingual-cased-ner-hrl",
-      model: "Xenova/bert-base-multilingual-cased-ner-hrl",
+    "token-classification": {
+        "tokenizer": _tokenizers_js__WEBPACK_IMPORTED_MODULE_0__.AutoTokenizer,
+        "pipeline": TokenClassificationPipeline,
+        "model": _models_js__WEBPACK_IMPORTED_MODULE_1__.AutoModelForTokenClassification,
+        "default": {
+            // TODO: replace with original
+            // "model": "Davlan/bert-base-multilingual-cased-ner-hrl",
+            "model": "Xenova/bert-base-multilingual-cased-ner-hrl",
+        },
+        "type": "text",
     },
-    type: "text",
-  },
-  "question-answering": {
-    tokenizer: _tokenizers_js__WEBPACK_IMPORTED_MODULE_0__.AutoTokenizer,
-    pipeline: QuestionAnsweringPipeline,
-    model: _models_js__WEBPACK_IMPORTED_MODULE_1__.AutoModelForQuestionAnswering,
-    default: {
-      // TODO: replace with original
-      // "model": "distilbert-base-cased-distilled-squad",
-      model: "Xenova/distilbert-base-cased-distilled-squad",
+    "question-answering": {
+        "tokenizer": _tokenizers_js__WEBPACK_IMPORTED_MODULE_0__.AutoTokenizer,
+        "pipeline": QuestionAnsweringPipeline,
+        "model": _models_js__WEBPACK_IMPORTED_MODULE_1__.AutoModelForQuestionAnswering,
+        "default": {
+            // TODO: replace with original
+            // "model": "distilbert-base-cased-distilled-squad",
+            "model": "Xenova/distilbert-base-cased-distilled-squad",
+        },
+        "type": "text",
     },
-    type: "text",
-  },
 
-  "fill-mask": {
-    tokenizer: _tokenizers_js__WEBPACK_IMPORTED_MODULE_0__.AutoTokenizer,
-    pipeline: FillMaskPipeline,
-    model: _models_js__WEBPACK_IMPORTED_MODULE_1__.AutoModelForMaskedLM,
-    default: {
-      // TODO: replace with original
-      // "model": "bert-base-uncased",
-      model: "Xenova/bert-base-uncased",
+    "fill-mask": {
+        "tokenizer": _tokenizers_js__WEBPACK_IMPORTED_MODULE_0__.AutoTokenizer,
+        "pipeline": FillMaskPipeline,
+        "model": _models_js__WEBPACK_IMPORTED_MODULE_1__.AutoModelForMaskedLM,
+        "default": {
+            // TODO: replace with original
+            // "model": "bert-base-uncased",
+            "model": "Xenova/bert-base-uncased",
+        },
+        "type": "text",
     },
-    type: "text",
-  },
-  summarization: {
-    tokenizer: _tokenizers_js__WEBPACK_IMPORTED_MODULE_0__.AutoTokenizer,
-    pipeline: SummarizationPipeline,
-    model: _models_js__WEBPACK_IMPORTED_MODULE_1__.AutoModelForSeq2SeqLM,
-    default: {
-      // TODO: replace with original
-      // "model": "sshleifer/distilbart-cnn-6-6",
-      model: "Xenova/distilbart-cnn-6-6",
+    "summarization": {
+        "tokenizer": _tokenizers_js__WEBPACK_IMPORTED_MODULE_0__.AutoTokenizer,
+        "pipeline": SummarizationPipeline,
+        "model": _models_js__WEBPACK_IMPORTED_MODULE_1__.AutoModelForSeq2SeqLM,
+        "default": {
+            // TODO: replace with original
+            // "model": "sshleifer/distilbart-cnn-6-6",
+            "model": "Xenova/distilbart-cnn-6-6",
+        },
+        "type": "text",
     },
-    type: "text",
-  },
-  translation: {
-    tokenizer: _tokenizers_js__WEBPACK_IMPORTED_MODULE_0__.AutoTokenizer,
-    pipeline: TranslationPipeline,
-    model: _models_js__WEBPACK_IMPORTED_MODULE_1__.AutoModelForSeq2SeqLM,
-    default: {
-      // TODO: replace with original
-      // "model": "t5-small",
-      model: "Xenova/t5-small",
+    "translation": {
+        "tokenizer": _tokenizers_js__WEBPACK_IMPORTED_MODULE_0__.AutoTokenizer,
+        "pipeline": TranslationPipeline,
+        "model": _models_js__WEBPACK_IMPORTED_MODULE_1__.AutoModelForSeq2SeqLM,
+        "default": {
+            // TODO: replace with original
+            // "model": "t5-small",
+            "model": "Xenova/t5-small",
+        },
+        "type": "text",
     },
-    type: "text",
-  },
-  "text2text-generation": {
-    tokenizer: _tokenizers_js__WEBPACK_IMPORTED_MODULE_0__.AutoTokenizer,
-    pipeline: Text2TextGenerationPipeline,
-    model: _models_js__WEBPACK_IMPORTED_MODULE_1__.AutoModelForSeq2SeqLM,
-    default: {
-      // TODO: replace with original
-      // "model": "google/flan-t5-small",
-      model: "Xenova/flan-t5-small",
+    "text2text-generation": {
+        "tokenizer": _tokenizers_js__WEBPACK_IMPORTED_MODULE_0__.AutoTokenizer,
+        "pipeline": Text2TextGenerationPipeline,
+        "model": _models_js__WEBPACK_IMPORTED_MODULE_1__.AutoModelForSeq2SeqLM,
+        "default": {
+            // TODO: replace with original
+            // "model": "google/flan-t5-small",
+            "model": "Xenova/flan-t5-small",
+        },
+        "type": "text",
     },
-    type: "text",
-  },
-  "text-generation": {
-    tokenizer: _tokenizers_js__WEBPACK_IMPORTED_MODULE_0__.AutoTokenizer,
-    pipeline: TextGenerationPipeline,
-    model: _models_js__WEBPACK_IMPORTED_MODULE_1__.AutoModelForCausalLM,
-    default: {
-      // TODO: replace with original
-      // "model": "gpt2",
-      model: "Xenova/gpt2",
+    "text-generation": {
+        "tokenizer": _tokenizers_js__WEBPACK_IMPORTED_MODULE_0__.AutoTokenizer,
+        "pipeline": TextGenerationPipeline,
+        "model": _models_js__WEBPACK_IMPORTED_MODULE_1__.AutoModelForCausalLM,
+        "default": {
+            // TODO: replace with original
+            // "model": "gpt2",
+            "model": "Xenova/gpt2",
+        },
+        "type": "text",
     },
-    type: "text",
-  },
-  "zero-shot-classification": {
-    tokenizer: _tokenizers_js__WEBPACK_IMPORTED_MODULE_0__.AutoTokenizer,
-    pipeline: ZeroShotClassificationPipeline,
-    model: _models_js__WEBPACK_IMPORTED_MODULE_1__.AutoModelForSequenceClassification,
-    default: {
-      // TODO: replace with original
-      // "model": "typeform/distilbert-base-uncased-mnli",
-      model: "Xenova/distilbert-base-uncased-mnli",
+    "zero-shot-classification": {
+        "tokenizer": _tokenizers_js__WEBPACK_IMPORTED_MODULE_0__.AutoTokenizer,
+        "pipeline": ZeroShotClassificationPipeline,
+        "model": _models_js__WEBPACK_IMPORTED_MODULE_1__.AutoModelForSequenceClassification,
+        "default": {
+            // TODO: replace with original
+            // "model": "typeform/distilbert-base-uncased-mnli",
+            "model": "Xenova/distilbert-base-uncased-mnli",
+        },
+        "type": "text",
     },
-    type: "text",
-  },
-  "audio-classification": {
-    pipeline: AudioClassificationPipeline,
-    model: _models_js__WEBPACK_IMPORTED_MODULE_1__.AutoModelForAudioClassification,
-    processor: _models_auto_processing_auto_js__WEBPACK_IMPORTED_MODULE_2__.AutoProcessor,
-    default: {
-      // TODO: replace with original
-      // "model": "superb/wav2vec2-base-superb-ks",
-      model: "Xenova/wav2vec2-base-superb-ks",
+    "audio-classification": {
+        "pipeline": AudioClassificationPipeline,
+        "model": _models_js__WEBPACK_IMPORTED_MODULE_1__.AutoModelForAudioClassification,
+        "processor": _models_auto_processing_auto_js__WEBPACK_IMPORTED_MODULE_2__.AutoProcessor,
+        "default": {
+            // TODO: replace with original
+            // "model": "superb/wav2vec2-base-superb-ks",
+            "model": "Xenova/wav2vec2-base-superb-ks",
+        },
+        "type": "audio",
     },
-    type: "audio",
-  },
-  "zero-shot-audio-classification": {
-    tokenizer: _tokenizers_js__WEBPACK_IMPORTED_MODULE_0__.AutoTokenizer,
-    pipeline: ZeroShotAudioClassificationPipeline,
-    model: _models_js__WEBPACK_IMPORTED_MODULE_1__.AutoModel,
-    processor: _models_auto_processing_auto_js__WEBPACK_IMPORTED_MODULE_2__.AutoProcessor,
-    default: {
-      // TODO: replace with original
-      // "model": "laion/clap-htsat-fused",
-      model: "Xenova/clap-htsat-unfused",
+    "zero-shot-audio-classification": {
+        "tokenizer": _tokenizers_js__WEBPACK_IMPORTED_MODULE_0__.AutoTokenizer,
+        "pipeline": ZeroShotAudioClassificationPipeline,
+        "model": _models_js__WEBPACK_IMPORTED_MODULE_1__.AutoModel,
+        "processor": _models_auto_processing_auto_js__WEBPACK_IMPORTED_MODULE_2__.AutoProcessor,
+        "default": {
+            // TODO: replace with original
+            // "model": "laion/clap-htsat-fused",
+            "model": "Xenova/clap-htsat-unfused",
+        },
+        "type": "multimodal",
     },
-    type: "multimodal",
-  },
-  "automatic-speech-recognition": {
-    tokenizer: _tokenizers_js__WEBPACK_IMPORTED_MODULE_0__.AutoTokenizer,
-    pipeline: AutomaticSpeechRecognitionPipeline,
-    model: [_models_js__WEBPACK_IMPORTED_MODULE_1__.AutoModelForSpeechSeq2Seq, _models_js__WEBPACK_IMPORTED_MODULE_1__.AutoModelForCTC],
-    processor: _models_auto_processing_auto_js__WEBPACK_IMPORTED_MODULE_2__.AutoProcessor,
-    default: {
-      // TODO: replace with original
-      // "model": "openai/whisper-tiny.en",
-      model: "Xenova/whisper-tiny.en",
+    "automatic-speech-recognition": {
+        "tokenizer": _tokenizers_js__WEBPACK_IMPORTED_MODULE_0__.AutoTokenizer,
+        "pipeline": AutomaticSpeechRecognitionPipeline,
+        "model": [_models_js__WEBPACK_IMPORTED_MODULE_1__.AutoModelForSpeechSeq2Seq, _models_js__WEBPACK_IMPORTED_MODULE_1__.AutoModelForCTC],
+        "processor": _models_auto_processing_auto_js__WEBPACK_IMPORTED_MODULE_2__.AutoProcessor,
+        "default": {
+            // TODO: replace with original
+            // "model": "openai/whisper-tiny.en",
+            "model": "Xenova/whisper-tiny.en",
+        },
+        "type": "multimodal",
     },
-    type: "multimodal",
-  },
-  "text-to-audio": {
-    tokenizer: _tokenizers_js__WEBPACK_IMPORTED_MODULE_0__.AutoTokenizer,
-    pipeline: TextToAudioPipeline,
-    model: [_models_js__WEBPACK_IMPORTED_MODULE_1__.AutoModelForTextToWaveform, _models_js__WEBPACK_IMPORTED_MODULE_1__.AutoModelForTextToSpectrogram],
-    processor: [_models_auto_processing_auto_js__WEBPACK_IMPORTED_MODULE_2__.AutoProcessor, /* Some don't use a processor */ null],
-    default: {
-      // TODO: replace with original
-      // "model": "microsoft/speecht5_tts",
-      model: "Xenova/speecht5_tts",
+    "text-to-audio": {
+        "tokenizer": _tokenizers_js__WEBPACK_IMPORTED_MODULE_0__.AutoTokenizer,
+        "pipeline": TextToAudioPipeline,
+        "model": [_models_js__WEBPACK_IMPORTED_MODULE_1__.AutoModelForTextToWaveform, _models_js__WEBPACK_IMPORTED_MODULE_1__.AutoModelForTextToSpectrogram],
+        "processor": [_models_auto_processing_auto_js__WEBPACK_IMPORTED_MODULE_2__.AutoProcessor, /* Some don't use a processor */ null],
+        "default": {
+            // TODO: replace with original
+            // "model": "microsoft/speecht5_tts",
+            "model": "Xenova/speecht5_tts",
+        },
+        "type": "text",
     },
-    type: "text",
-  },
-  "image-to-text": {
-    tokenizer: _tokenizers_js__WEBPACK_IMPORTED_MODULE_0__.AutoTokenizer,
-    pipeline: ImageToTextPipeline,
-    model: _models_js__WEBPACK_IMPORTED_MODULE_1__.AutoModelForVision2Seq,
-    processor: _models_auto_processing_auto_js__WEBPACK_IMPORTED_MODULE_2__.AutoProcessor,
-    default: {
-      // TODO: replace with original
-      // "model": "nlpconnect/vit-gpt2-image-captioning",
-      model: "Xenova/vit-gpt2-image-captioning",
+    "image-to-text": {
+        "tokenizer": _tokenizers_js__WEBPACK_IMPORTED_MODULE_0__.AutoTokenizer,
+        "pipeline": ImageToTextPipeline,
+        "model": _models_js__WEBPACK_IMPORTED_MODULE_1__.AutoModelForVision2Seq,
+        "processor": _models_auto_processing_auto_js__WEBPACK_IMPORTED_MODULE_2__.AutoProcessor,
+        "default": {
+            // TODO: replace with original
+            // "model": "nlpconnect/vit-gpt2-image-captioning",
+            "model": "Xenova/vit-gpt2-image-captioning",
+        },
+        "type": "multimodal",
     },
-    type: "multimodal",
-  },
 
-  "image-classification": {
-    // no tokenizer
-    pipeline: ImageClassificationPipeline,
-    model: _models_js__WEBPACK_IMPORTED_MODULE_1__.AutoModelForImageClassification,
-    processor: _models_auto_processing_auto_js__WEBPACK_IMPORTED_MODULE_2__.AutoProcessor,
-    default: {
-      // TODO: replace with original
-      // "model": "google/vit-base-patch16-224",
-      model: "Xenova/vit-base-patch16-224",
+    "image-classification": {
+        // no tokenizer
+        "pipeline": ImageClassificationPipeline,
+        "model": _models_js__WEBPACK_IMPORTED_MODULE_1__.AutoModelForImageClassification,
+        "processor": _models_auto_processing_auto_js__WEBPACK_IMPORTED_MODULE_2__.AutoProcessor,
+        "default": {
+            // TODO: replace with original
+            // "model": "google/vit-base-patch16-224",
+            "model": "Xenova/vit-base-patch16-224",
+        },
+        "type": "multimodal",
     },
-    type: "multimodal",
-  },
 
-  "image-segmentation": {
-    // no tokenizer
-    pipeline: ImageSegmentationPipeline,
-    model: [
-      _models_js__WEBPACK_IMPORTED_MODULE_1__.AutoModelForImageSegmentation,
-      _models_js__WEBPACK_IMPORTED_MODULE_1__.AutoModelForSemanticSegmentation,
-      _models_js__WEBPACK_IMPORTED_MODULE_1__.AutoModelForUniversalSegmentation,
-    ],
-    processor: _models_auto_processing_auto_js__WEBPACK_IMPORTED_MODULE_2__.AutoProcessor,
-    default: {
-      // TODO: replace with original
-      // "model": "facebook/detr-resnet-50-panoptic",
-      model: "Xenova/detr-resnet-50-panoptic",
+    "image-segmentation": {
+        // no tokenizer
+        "pipeline": ImageSegmentationPipeline,
+        "model": [_models_js__WEBPACK_IMPORTED_MODULE_1__.AutoModelForImageSegmentation, _models_js__WEBPACK_IMPORTED_MODULE_1__.AutoModelForSemanticSegmentation, _models_js__WEBPACK_IMPORTED_MODULE_1__.AutoModelForUniversalSegmentation],
+        "processor": _models_auto_processing_auto_js__WEBPACK_IMPORTED_MODULE_2__.AutoProcessor,
+        "default": {
+            // TODO: replace with original
+            // "model": "facebook/detr-resnet-50-panoptic",
+            "model": "Xenova/detr-resnet-50-panoptic",
+        },
+        "type": "multimodal",
     },
-    type: "multimodal",
-  },
-  "background-removal": {
-    // no tokenizer
-    pipeline: BackgroundRemovalPipeline,
-    model: [
-      _models_js__WEBPACK_IMPORTED_MODULE_1__.AutoModelForImageSegmentation,
-      _models_js__WEBPACK_IMPORTED_MODULE_1__.AutoModelForSemanticSegmentation,
-      _models_js__WEBPACK_IMPORTED_MODULE_1__.AutoModelForUniversalSegmentation,
-    ],
-    processor: _models_auto_processing_auto_js__WEBPACK_IMPORTED_MODULE_2__.AutoProcessor,
-    default: {
-      model: "Xenova/modnet",
+    "background-removal": {
+        // no tokenizer
+        "pipeline": BackgroundRemovalPipeline,
+        "model": [_models_js__WEBPACK_IMPORTED_MODULE_1__.AutoModelForImageSegmentation, _models_js__WEBPACK_IMPORTED_MODULE_1__.AutoModelForSemanticSegmentation, _models_js__WEBPACK_IMPORTED_MODULE_1__.AutoModelForUniversalSegmentation],
+        "processor": _models_auto_processing_auto_js__WEBPACK_IMPORTED_MODULE_2__.AutoProcessor,
+        "default": {
+            "model": "Xenova/modnet",
+        },
+        "type": "image",
     },
-    type: "image",
-  },
 
-  "zero-shot-image-classification": {
-    tokenizer: _tokenizers_js__WEBPACK_IMPORTED_MODULE_0__.AutoTokenizer,
-    pipeline: ZeroShotImageClassificationPipeline,
-    model: _models_js__WEBPACK_IMPORTED_MODULE_1__.AutoModel,
-    processor: _models_auto_processing_auto_js__WEBPACK_IMPORTED_MODULE_2__.AutoProcessor,
-    default: {
-      // TODO: replace with original
-      // "model": "openai/clip-vit-base-patch32",
-      model: "Xenova/clip-vit-base-patch32",
+    "zero-shot-image-classification": {
+        "tokenizer": _tokenizers_js__WEBPACK_IMPORTED_MODULE_0__.AutoTokenizer,
+        "pipeline": ZeroShotImageClassificationPipeline,
+        "model": _models_js__WEBPACK_IMPORTED_MODULE_1__.AutoModel,
+        "processor": _models_auto_processing_auto_js__WEBPACK_IMPORTED_MODULE_2__.AutoProcessor,
+        "default": {
+            // TODO: replace with original
+            // "model": "openai/clip-vit-base-patch32",
+            "model": "Xenova/clip-vit-base-patch32",
+        },
+        "type": "multimodal",
     },
-    type: "multimodal",
-  },
 
-  "object-detection": {
-    // no tokenizer
-    pipeline: ObjectDetectionPipeline,
-    model: _models_js__WEBPACK_IMPORTED_MODULE_1__.AutoModelForObjectDetection,
-    processor: _models_auto_processing_auto_js__WEBPACK_IMPORTED_MODULE_2__.AutoProcessor,
-    default: {
-      // TODO: replace with original
-      // "model": "facebook/detr-resnet-50",
-      model: "Xenova/detr-resnet-50",
+    "object-detection": {
+        // no tokenizer
+        "pipeline": ObjectDetectionPipeline,
+        "model": _models_js__WEBPACK_IMPORTED_MODULE_1__.AutoModelForObjectDetection,
+        "processor": _models_auto_processing_auto_js__WEBPACK_IMPORTED_MODULE_2__.AutoProcessor,
+        "default": {
+            // TODO: replace with original
+            // "model": "facebook/detr-resnet-50",
+            "model": "Xenova/detr-resnet-50",
+        },
+        "type": "multimodal",
     },
-    type: "multimodal",
-  },
-  "zero-shot-object-detection": {
-    tokenizer: _tokenizers_js__WEBPACK_IMPORTED_MODULE_0__.AutoTokenizer,
-    pipeline: ZeroShotObjectDetectionPipeline,
-    model: _models_js__WEBPACK_IMPORTED_MODULE_1__.AutoModelForZeroShotObjectDetection,
-    processor: _models_auto_processing_auto_js__WEBPACK_IMPORTED_MODULE_2__.AutoProcessor,
-    default: {
-      // TODO: replace with original
-      // "model": "google/owlvit-base-patch32",
-      model: "Xenova/owlvit-base-patch32",
+    "zero-shot-object-detection": {
+        "tokenizer": _tokenizers_js__WEBPACK_IMPORTED_MODULE_0__.AutoTokenizer,
+        "pipeline": ZeroShotObjectDetectionPipeline,
+        "model": _models_js__WEBPACK_IMPORTED_MODULE_1__.AutoModelForZeroShotObjectDetection,
+        "processor": _models_auto_processing_auto_js__WEBPACK_IMPORTED_MODULE_2__.AutoProcessor,
+        "default": {
+            // TODO: replace with original
+            // "model": "google/owlvit-base-patch32",
+            "model": "Xenova/owlvit-base-patch32",
+        },
+        "type": "multimodal",
     },
-    type: "multimodal",
-  },
-  "document-question-answering": {
-    tokenizer: _tokenizers_js__WEBPACK_IMPORTED_MODULE_0__.AutoTokenizer,
-    pipeline: DocumentQuestionAnsweringPipeline,
-    model: _models_js__WEBPACK_IMPORTED_MODULE_1__.AutoModelForDocumentQuestionAnswering,
-    processor: _models_auto_processing_auto_js__WEBPACK_IMPORTED_MODULE_2__.AutoProcessor,
-    default: {
-      // TODO: replace with original
-      // "model": "naver-clova-ix/donut-base-finetuned-docvqa",
-      model: "Xenova/donut-base-finetuned-docvqa",
+    "document-question-answering": {
+        "tokenizer": _tokenizers_js__WEBPACK_IMPORTED_MODULE_0__.AutoTokenizer,
+        "pipeline": DocumentQuestionAnsweringPipeline,
+        "model": _models_js__WEBPACK_IMPORTED_MODULE_1__.AutoModelForDocumentQuestionAnswering,
+        "processor": _models_auto_processing_auto_js__WEBPACK_IMPORTED_MODULE_2__.AutoProcessor,
+        "default": {
+            // TODO: replace with original
+            // "model": "naver-clova-ix/donut-base-finetuned-docvqa",
+            "model": "Xenova/donut-base-finetuned-docvqa",
+        },
+        "type": "multimodal",
     },
-    type: "multimodal",
-  },
-  "image-to-image": {
-    // no tokenizer
-    pipeline: ImageToImagePipeline,
-    model: _models_js__WEBPACK_IMPORTED_MODULE_1__.AutoModelForImageToImage,
-    processor: _models_auto_processing_auto_js__WEBPACK_IMPORTED_MODULE_2__.AutoProcessor,
-    default: {
-      // TODO: replace with original
-      // "model": "caidas/swin2SR-classical-sr-x2-64",
-      model: "Xenova/swin2SR-classical-sr-x2-64",
+    "image-to-image": {
+        // no tokenizer
+        "pipeline": ImageToImagePipeline,
+        "model": _models_js__WEBPACK_IMPORTED_MODULE_1__.AutoModelForImageToImage,
+        "processor": _models_auto_processing_auto_js__WEBPACK_IMPORTED_MODULE_2__.AutoProcessor,
+        "default": {
+            // TODO: replace with original
+            // "model": "caidas/swin2SR-classical-sr-x2-64",
+            "model": "Xenova/swin2SR-classical-sr-x2-64",
+        },
+        "type": "image",
     },
-    type: "image",
-  },
-  "depth-estimation": {
-    // no tokenizer
-    pipeline: DepthEstimationPipeline,
-    model: _models_js__WEBPACK_IMPORTED_MODULE_1__.AutoModelForDepthEstimation,
-    processor: _models_auto_processing_auto_js__WEBPACK_IMPORTED_MODULE_2__.AutoProcessor,
-    default: {
-      // TODO: replace with original
-      // "model": "Intel/dpt-large",
-      model: "Xenova/dpt-large",
+    "depth-estimation": {
+        // no tokenizer
+        "pipeline": DepthEstimationPipeline,
+        "model": _models_js__WEBPACK_IMPORTED_MODULE_1__.AutoModelForDepthEstimation,
+        "processor": _models_auto_processing_auto_js__WEBPACK_IMPORTED_MODULE_2__.AutoProcessor,
+        "default": {
+            // TODO: replace with original
+            // "model": "Intel/dpt-large",
+            "model": "Xenova/dpt-large",
+        },
+        "type": "image",
     },
-    type: "image",
-  },
 
-  // This task serves as a useful interface for dealing with sentence-transformers (https://huggingface.co/sentence-transformers).
-  "feature-extraction": {
-    tokenizer: _tokenizers_js__WEBPACK_IMPORTED_MODULE_0__.AutoTokenizer,
-    pipeline: FeatureExtractionPipeline,
-    model: _models_js__WEBPACK_IMPORTED_MODULE_1__.AutoModel,
-    default: {
-      // TODO: replace with original
-      // "model": "sentence-transformers/all-MiniLM-L6-v2",
-      model: "Xenova/all-MiniLM-L6-v2",
+    // This task serves as a useful interface for dealing with sentence-transformers (https://huggingface.co/sentence-transformers).
+    "feature-extraction": {
+        "tokenizer": _tokenizers_js__WEBPACK_IMPORTED_MODULE_0__.AutoTokenizer,
+        "pipeline": FeatureExtractionPipeline,
+        "model": _models_js__WEBPACK_IMPORTED_MODULE_1__.AutoModel,
+        "default": {
+            // TODO: replace with original
+            // "model": "sentence-transformers/all-MiniLM-L6-v2",
+            "model": "Xenova/all-MiniLM-L6-v2",
+        },
+        "type": "text",
     },
-    type: "text",
-  },
-  "image-feature-extraction": {
-    processor: _models_auto_processing_auto_js__WEBPACK_IMPORTED_MODULE_2__.AutoProcessor,
-    pipeline: ImageFeatureExtractionPipeline,
-    model: [_models_js__WEBPACK_IMPORTED_MODULE_1__.AutoModelForImageFeatureExtraction, _models_js__WEBPACK_IMPORTED_MODULE_1__.AutoModel],
-    default: {
-      // TODO: replace with original
-      // "model": "google/vit-base-patch16-224",
-      model: "Xenova/vit-base-patch16-224-in21k",
+    "image-feature-extraction": {
+        "processor": _models_auto_processing_auto_js__WEBPACK_IMPORTED_MODULE_2__.AutoProcessor,
+        "pipeline": ImageFeatureExtractionPipeline,
+        "model": [_models_js__WEBPACK_IMPORTED_MODULE_1__.AutoModelForImageFeatureExtraction, _models_js__WEBPACK_IMPORTED_MODULE_1__.AutoModel],
+        "default": {
+            // TODO: replace with original
+            // "model": "google/vit-base-patch16-224",
+            "model": "Xenova/vit-base-patch16-224-in21k",
+        },
+        "type": "image",
     },
-    type: "image",
-  },
-});
+})
+
 
 // TODO: Add types for TASK_ALIASES
 const TASK_ALIASES = Object.freeze({
-  "sentiment-analysis": "text-classification",
-  ner: "token-classification",
-  // "vqa": "visual-question-answering", // TODO: Add
-  asr: "automatic-speech-recognition",
-  "text-to-speech": "text-to-audio",
+    "sentiment-analysis": "text-classification",
+    "ner": "token-classification",
+    // "vqa": "visual-question-answering", // TODO: Add
+    "asr": "automatic-speech-recognition",
+    "text-to-speech": "text-to-audio",
 
-  // Add for backwards compatibility
-  embeddings: "feature-extraction",
+    // Add for backwards compatibility
+    "embeddings": "feature-extraction",
 });
 
 /**
@@ -25253,77 +25342,74 @@ const TASK_ALIASES = Object.freeze({
  * @throws {Error} If an unsupported pipeline is requested.
  */
 async function pipeline(
-  task,
-  model = null,
-  {
-    progress_callback = null,
-    config = null,
-    cache_dir = null,
-    local_files_only = false,
-    revision = "main",
-    device = null,
-    dtype = null,
-    subfolder = "onnx",
-    use_external_data_format = null,
-    model_file_name = null,
-    session_options = {},
-    handleModelText = null,
-  } = {},
+    task,
+    model = null,
+    {
+        progress_callback = null,
+        config = null,
+        cache_dir = null,
+        local_files_only = false,
+        revision = 'main',
+        device = null,
+        dtype = null,
+        subfolder = 'onnx',
+        use_external_data_format = null,
+        model_file_name = null,
+        session_options = {},
+    } = {}
 ) {
-  // Helper method to construct pipeline
+    // Helper method to construct pipeline
 
-  // Apply aliases
-  // @ts-ignore
-  task = TASK_ALIASES[task] ?? task;
+    // Apply aliases
+    // @ts-ignore
+    task = TASK_ALIASES[task] ?? task;
 
-  // Get pipeline info
-  const pipelineInfo = SUPPORTED_TASKS[task.split("_", 1)[0]];
-  if (!pipelineInfo) {
-    throw Error(
-      `Unsupported pipeline: ${task}. Must be one of [${Object.keys(SUPPORTED_TASKS)}]`,
-    );
-  }
+    // Get pipeline info
+    const pipelineInfo = SUPPORTED_TASKS[task.split('_', 1)[0]];
+    if (!pipelineInfo) {
+        throw Error(`Unsupported pipeline: ${task}. Must be one of [${Object.keys(SUPPORTED_TASKS)}]`)
+    }
 
-  // Use model if specified, otherwise, use default
-  if (!model) {
-    model = pipelineInfo.default.model;
-    console.log(`No model specified. Using default model: "${model}".`);
-  }
+    // Use model if specified, otherwise, use default
+    if (!model) {
+        model = pipelineInfo.default.model
+        console.log(`No model specified. Using default model: "${model}".`);
+    }
 
-  const pretrainedOptions = {
-    progress_callback,
-    config,
-    cache_dir,
-    local_files_only,
-    revision,
-    device,
-    dtype,
-    subfolder,
-    use_external_data_format,
-    model_file_name,
-    session_options,
-    handleModelText,
-  };
+    const pretrainedOptions = {
+        progress_callback,
+        config,
+        cache_dir,
+        local_files_only,
+        revision,
+        device,
+        dtype,
+        subfolder,
+        use_external_data_format,
+        model_file_name,
+        session_options,
+    }
 
-  const classes = new Map([
-    ["tokenizer", pipelineInfo.tokenizer],
-    ["model", pipelineInfo.model],
-    ["processor", pipelineInfo.processor],
-  ]);
+    const classes = new Map([
+        ['tokenizer', pipelineInfo.tokenizer],
+        ['model', pipelineInfo.model],
+        ['processor', pipelineInfo.processor],
+    ]);
 
-  // Load model, tokenizer, and processor (if they exist)
-  const results = await loadItems(classes, model, pretrainedOptions);
-  results.task = task;
+    // Load model, tokenizer, and processor (if they exist)
+    const results = await loadItems(classes, model, pretrainedOptions);
+    results.task = task;
 
-  (0,_utils_core_js__WEBPACK_IMPORTED_MODULE_5__.dispatchCallback)(progress_callback, {
-    status: "ready",
-    task: task,
-    model: model,
-  });
+    (0,_utils_core_js__WEBPACK_IMPORTED_MODULE_5__.dispatchCallback)(progress_callback, {
+        'status': 'ready',
+        'task': task,
+        'model': model,
+    });
 
-  const pipelineClass = pipelineInfo.pipeline;
-  return new pipelineClass(results);
+    const pipelineClass = pipelineInfo.pipeline;
+    return new pipelineClass(results);
 }
+
 
 /**
  * Helper function to get applicable model, tokenizer, or processor classes for a given model.
@@ -25333,60 +25419,62 @@ async function pipeline(
  * @private
  */
 async function loadItems(mapping, model, pretrainedOptions) {
-  const result = Object.create(null);
 
-  /**@type {Promise[]} */
-  const promises = [];
-  for (const [name, cls] of mapping.entries()) {
-    if (!cls) continue;
+    const result = Object.create(null);
 
-    /**@type {Promise} */
-    let promise;
-    if (Array.isArray(cls)) {
-      promise = new Promise(async (resolve, reject) => {
-        let e;
-        for (const c of cls) {
-          if (c === null) {
-            // If null, we resolve it immediately, meaning the relevant
-            // class was not found, but it is optional.
-            resolve(null);
-            return;
-          }
-          try {
-            resolve(await c.from_pretrained(model, pretrainedOptions));
-            return;
-          } catch (err) {
-            if (err.message?.includes("Unsupported model type")) {
-              // If the error is due to an unsupported model type, we
-              // save the error and try the next class.
-              e = err;
-            } else if (err.message?.includes("Could not locate file")) {
-              e = err;
-            } else {
-              reject(err);
-              return;
-            }
-          }
+    /**@type {Promise[]} */
+    const promises = [];
+    for (const [name, cls] of mapping.entries()) {
+        if (!cls) continue;
+
+        /**@type {Promise} */
+        let promise;
+        if (Array.isArray(cls)) {
+            promise = new Promise(async (resolve, reject) => {
+                let e;
+                for (const c of cls) {
+                    if (c === null) {
+                        // If null, we resolve it immediately, meaning the relevant
+                        // class was not found, but it is optional.
+                        resolve(null);
+                        return;
+                    }
+                    try {
+                        resolve(await c.from_pretrained(model, pretrainedOptions));
+                        return;
+                    } catch (err) {
+                        if (err.message?.includes('Unsupported model type')) {
+                            // If the error is due to an unsupported model type, we
+                            // save the error and try the next class.
+                            e = err;
+                        } else if (err.message?.includes('Could not locate file')) {
+                            e = err;
+                        } else {
+                            reject(err);
+                            return;
+                        }
+
+                    }
+                }
+                reject(e);
+            })
+        } else {
+            promise = cls.from_pretrained(model, pretrainedOptions);
         }
-        reject(e);
-      });
-    } else {
-      promise = cls.from_pretrained(model, pretrainedOptions);
+
+        result[name] = promise;
+        promises.push(promise);
     }
 
-    result[name] = promise;
-    promises.push(promise);
-  }
+    // Wait for all promises to resolve (in parallel)
+    await Promise.all(promises);
 
-  // Wait for all promises to resolve (in parallel)
-  await Promise.all(promises);
+    // Then assign to result
+    for (const [name, promise] of Object.entries(result)) {
+        result[name] = await promise;
+    }
 
-  // Then assign to result
-  for (const [name, promise] of Object.entries(result)) {
-    result[name] = await promise;
-  }
-
-  return result;
+    return result;
 }
 
 
@@ -26835,6 +26923,8 @@ class PreTokenizer extends _utils_generic_js__WEBPACK_IMPORTED_MODULE_0__.Callab
                 return new DigitsPreTokenizer(config);
             case 'Replace':
                 return new ReplacePreTokenizer(config);
+            case 'FixedLength':
+                return new FixedLengthPreTokenizer(config);
             default:
                 throw new Error(`Unknown PreTokenizer type: ${config.type}`);
         }
@@ -27950,6 +28040,31 @@ class ReplacePreTokenizer extends PreTokenizer {
             return [text];
         }
         return [text.replaceAll(this.pattern, this.config.content)];
+    }
+}
+
+class FixedLengthPreTokenizer extends PreTokenizer {
+    /**
+     * @param {Object} config The configuration options for the pre-tokenizer.
+     * @param {number} config.length The fixed length to split the text into.
+     */
+    constructor(config) {
+        super();
+        this._length = config.length;
+    }
+
+    /**
+     * Pre-tokenizes the input text by splitting it into fixed-length tokens.
+     * @param {string} text The text to be pre-tokenized.
+     * @param {Object} [options] Additional options for the pre-tokenization logic.
+     * @returns {string[]} An array of tokens produced by splitting the input text into fixed-length tokens.
+     */
+    pre_tokenize_text(text, options) {
+        const tokens = [];
+        for (let i = 0; i < text.length; i += this._length) {
+            tokens.push(text.slice(i, i + this._length));
+        }
+        return tokens;
     }
 }
 
@@ -32262,13 +32377,15 @@ async function getModelFile(
   return_path = false,
 ) {
   if (typeof _env_js__WEBPACK_IMPORTED_MODULE_2__.env.getModelFile === "function") {
-    return await _env_js__WEBPACK_IMPORTED_MODULE_2__.env.getModelFile(
+     const res= await _env_js__WEBPACK_IMPORTED_MODULE_2__.env.getModelFile(
       path_or_repo_id,
       filename,
       fatal,
       options,
       return_path,
-    );
+    ) ;
+    // @ts-ignore
+    if(res)return res
   }
   if (!_env_js__WEBPACK_IMPORTED_MODULE_2__.env.allowLocalModels) {
     // User has disabled local models, so we just make sure other settings are correct.
@@ -32528,6 +32645,7 @@ async function getModelFile(
       await cache
         .put(
           cacheKey,
+          // @ts-ignore
           new Response(result, {
             headers: response.headers,
           }),
@@ -34661,6 +34779,7 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */   permute: () => (/* binding */ permute),
 /* harmony export */   quantize_embeddings: () => (/* binding */ quantize_embeddings),
 /* harmony export */   rand: () => (/* binding */ rand),
+/* harmony export */   randn: () => (/* binding */ randn),
 /* harmony export */   rfft: () => (/* binding */ rfft),
 /* harmony export */   slice: () => (/* binding */ slice),
 /* harmony export */   stack: () => (/* binding */ stack),
@@ -35513,7 +35632,11 @@ class Tensor {
             map_fn = Number;
         } else if (!is_source_bigint && is_dest_bigint) {
             // TypeError: Cannot convert [x] to a BigInt
-            map_fn = BigInt;
+            if (['float16', 'float32', 'float64'].includes(this.type)) {
+                map_fn = (x) => BigInt(Math.floor(x));
+            } else {
+                map_fn = BigInt;
+            }
         }
 
         // @ts-ignore
@@ -36193,6 +36316,29 @@ function rand(size) {
 }
 
 /**
+ * Returns a tensor filled with random numbers from a normal distribution with mean 0 and variance 1 (also called the standard normal distribution).
+ * @param {number[]} size A sequence of integers defining the shape of the output tensor.
+ * @returns {Tensor} The random tensor.
+ */
+function randn(size) {
+    const length = size.reduce((a, b) => a * b, 1);
+
+    // Box-Muller transform
+    function boxMullerRandom() {
+        // NOTE: 1 - Math.random() is used to avoid log(0)
+        const u = 1 - Math.random();
+        const v = 1 - Math.random();
+        return Math.sqrt(-2.0 * Math.log(u)) * Math.cos(2.0 * Math.PI * v);
+    }
+
+    return new Tensor(
+        "float32",
+        Float32Array.from({ length }, () => boxMullerRandom()),
+        size,
+    )
+}
+
+/**
  * Quantizes the embeddings tensor to binary or unsigned binary precision.
  * @param {Tensor} tensor The tensor to quantize.
  * @param {'binary'|'ubinary'} precision The precision to use for quantization.
@@ -36689,6 +36835,7 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */   DonutImageProcessor: () => (/* reexport safe */ _models_image_processors_js__WEBPACK_IMPORTED_MODULE_14__.DonutImageProcessor),
 /* harmony export */   DonutSwinModel: () => (/* reexport safe */ _models_js__WEBPACK_IMPORTED_MODULE_2__.DonutSwinModel),
 /* harmony export */   DonutSwinPreTrainedModel: () => (/* reexport safe */ _models_js__WEBPACK_IMPORTED_MODULE_2__.DonutSwinPreTrainedModel),
+/* harmony export */   EdgeTamModel: () => (/* reexport safe */ _models_js__WEBPACK_IMPORTED_MODULE_2__.EdgeTamModel),
 /* harmony export */   EfficientNetForImageClassification: () => (/* reexport safe */ _models_js__WEBPACK_IMPORTED_MODULE_2__.EfficientNetForImageClassification),
 /* harmony export */   EfficientNetImageProcessor: () => (/* reexport safe */ _models_image_processors_js__WEBPACK_IMPORTED_MODULE_14__.EfficientNetImageProcessor),
 /* harmony export */   EfficientNetModel: () => (/* reexport safe */ _models_js__WEBPACK_IMPORTED_MODULE_2__.EfficientNetModel),
@@ -37082,6 +37229,14 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */   RobertaModel: () => (/* reexport safe */ _models_js__WEBPACK_IMPORTED_MODULE_2__.RobertaModel),
 /* harmony export */   RobertaPreTrainedModel: () => (/* reexport safe */ _models_js__WEBPACK_IMPORTED_MODULE_2__.RobertaPreTrainedModel),
 /* harmony export */   RobertaTokenizer: () => (/* reexport safe */ _tokenizers_js__WEBPACK_IMPORTED_MODULE_3__.RobertaTokenizer),
+/* harmony export */   Sam2ImageProcessor: () => (/* reexport safe */ _models_image_processors_js__WEBPACK_IMPORTED_MODULE_14__.Sam2ImageProcessor),
+/* harmony export */   Sam2ImageSegmentationOutput: () => (/* reexport safe */ _models_js__WEBPACK_IMPORTED_MODULE_2__.Sam2ImageSegmentationOutput),
+/* harmony export */   Sam2Model: () => (/* reexport safe */ _models_js__WEBPACK_IMPORTED_MODULE_2__.Sam2Model),
+/* harmony export */   Sam2PreTrainedModel: () => (/* reexport safe */ _models_js__WEBPACK_IMPORTED_MODULE_2__.Sam2PreTrainedModel),
+/* harmony export */   Sam2Processor: () => (/* reexport safe */ _models_processors_js__WEBPACK_IMPORTED_MODULE_17__.Sam2Processor),
+/* harmony export */   Sam2VideoProcessor: () => (/* reexport safe */ _models_processors_js__WEBPACK_IMPORTED_MODULE_17__.Sam2VideoProcessor),
+/* harmony export */   Sam3ImageProcessor: () => (/* reexport safe */ _models_image_processors_js__WEBPACK_IMPORTED_MODULE_14__.Sam3ImageProcessor),
+/* harmony export */   Sam3TrackerModel: () => (/* reexport safe */ _models_js__WEBPACK_IMPORTED_MODULE_2__.Sam3TrackerModel),
 /* harmony export */   SamImageProcessor: () => (/* reexport safe */ _models_image_processors_js__WEBPACK_IMPORTED_MODULE_14__.SamImageProcessor),
 /* harmony export */   SamImageSegmentationOutput: () => (/* reexport safe */ _models_js__WEBPACK_IMPORTED_MODULE_2__.SamImageSegmentationOutput),
 /* harmony export */   SamModel: () => (/* reexport safe */ _models_js__WEBPACK_IMPORTED_MODULE_2__.SamModel),
@@ -37142,6 +37297,8 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */   StyleTextToSpeech2Model: () => (/* reexport safe */ _models_js__WEBPACK_IMPORTED_MODULE_2__.StyleTextToSpeech2Model),
 /* harmony export */   StyleTextToSpeech2PreTrainedModel: () => (/* reexport safe */ _models_js__WEBPACK_IMPORTED_MODULE_2__.StyleTextToSpeech2PreTrainedModel),
 /* harmony export */   SummarizationPipeline: () => (/* reexport safe */ _pipelines_js__WEBPACK_IMPORTED_MODULE_1__.SummarizationPipeline),
+/* harmony export */   SupertonicForConditionalGeneration: () => (/* reexport safe */ _models_js__WEBPACK_IMPORTED_MODULE_2__.SupertonicForConditionalGeneration),
+/* harmony export */   SupertonicPreTrainedModel: () => (/* reexport safe */ _models_js__WEBPACK_IMPORTED_MODULE_2__.SupertonicPreTrainedModel),
 /* harmony export */   SuppressTokensAtBeginLogitsProcessor: () => (/* reexport safe */ _generation_logits_process_js__WEBPACK_IMPORTED_MODULE_21__.SuppressTokensAtBeginLogitsProcessor),
 /* harmony export */   Swin2SRForImageSuperResolution: () => (/* reexport safe */ _models_js__WEBPACK_IMPORTED_MODULE_2__.Swin2SRForImageSuperResolution),
 /* harmony export */   Swin2SRImageProcessor: () => (/* reexport safe */ _models_image_processors_js__WEBPACK_IMPORTED_MODULE_14__.Swin2SRImageProcessor),
@@ -37303,6 +37460,7 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */   pipeline: () => (/* reexport safe */ _pipelines_js__WEBPACK_IMPORTED_MODULE_1__.pipeline),
 /* harmony export */   quantize_embeddings: () => (/* reexport safe */ _utils_tensor_js__WEBPACK_IMPORTED_MODULE_8__.quantize_embeddings),
 /* harmony export */   rand: () => (/* reexport safe */ _utils_tensor_js__WEBPACK_IMPORTED_MODULE_8__.rand),
+/* harmony export */   randn: () => (/* reexport safe */ _utils_tensor_js__WEBPACK_IMPORTED_MODULE_8__.randn),
 /* harmony export */   read_audio: () => (/* reexport safe */ _utils_audio_js__WEBPACK_IMPORTED_MODULE_5__.read_audio),
 /* harmony export */   rfft: () => (/* reexport safe */ _utils_tensor_js__WEBPACK_IMPORTED_MODULE_8__.rfft),
 /* harmony export */   round: () => (/* reexport safe */ _utils_maths_js__WEBPACK_IMPORTED_MODULE_9__.round),
@@ -37601,6 +37759,7 @@ var __webpack_exports__DonutFeatureExtractor = __webpack_exports__.DonutFeatureE
 var __webpack_exports__DonutImageProcessor = __webpack_exports__.DonutImageProcessor;
 var __webpack_exports__DonutSwinModel = __webpack_exports__.DonutSwinModel;
 var __webpack_exports__DonutSwinPreTrainedModel = __webpack_exports__.DonutSwinPreTrainedModel;
+var __webpack_exports__EdgeTamModel = __webpack_exports__.EdgeTamModel;
 var __webpack_exports__EfficientNetForImageClassification = __webpack_exports__.EfficientNetForImageClassification;
 var __webpack_exports__EfficientNetImageProcessor = __webpack_exports__.EfficientNetImageProcessor;
 var __webpack_exports__EfficientNetModel = __webpack_exports__.EfficientNetModel;
@@ -37994,6 +38153,14 @@ var __webpack_exports__RobertaForTokenClassification = __webpack_exports__.Rober
 var __webpack_exports__RobertaModel = __webpack_exports__.RobertaModel;
 var __webpack_exports__RobertaPreTrainedModel = __webpack_exports__.RobertaPreTrainedModel;
 var __webpack_exports__RobertaTokenizer = __webpack_exports__.RobertaTokenizer;
+var __webpack_exports__Sam2ImageProcessor = __webpack_exports__.Sam2ImageProcessor;
+var __webpack_exports__Sam2ImageSegmentationOutput = __webpack_exports__.Sam2ImageSegmentationOutput;
+var __webpack_exports__Sam2Model = __webpack_exports__.Sam2Model;
+var __webpack_exports__Sam2PreTrainedModel = __webpack_exports__.Sam2PreTrainedModel;
+var __webpack_exports__Sam2Processor = __webpack_exports__.Sam2Processor;
+var __webpack_exports__Sam2VideoProcessor = __webpack_exports__.Sam2VideoProcessor;
+var __webpack_exports__Sam3ImageProcessor = __webpack_exports__.Sam3ImageProcessor;
+var __webpack_exports__Sam3TrackerModel = __webpack_exports__.Sam3TrackerModel;
 var __webpack_exports__SamImageProcessor = __webpack_exports__.SamImageProcessor;
 var __webpack_exports__SamImageSegmentationOutput = __webpack_exports__.SamImageSegmentationOutput;
 var __webpack_exports__SamModel = __webpack_exports__.SamModel;
@@ -38054,6 +38221,8 @@ var __webpack_exports__StoppingCriteriaList = __webpack_exports__.StoppingCriter
 var __webpack_exports__StyleTextToSpeech2Model = __webpack_exports__.StyleTextToSpeech2Model;
 var __webpack_exports__StyleTextToSpeech2PreTrainedModel = __webpack_exports__.StyleTextToSpeech2PreTrainedModel;
 var __webpack_exports__SummarizationPipeline = __webpack_exports__.SummarizationPipeline;
+var __webpack_exports__SupertonicForConditionalGeneration = __webpack_exports__.SupertonicForConditionalGeneration;
+var __webpack_exports__SupertonicPreTrainedModel = __webpack_exports__.SupertonicPreTrainedModel;
 var __webpack_exports__SuppressTokensAtBeginLogitsProcessor = __webpack_exports__.SuppressTokensAtBeginLogitsProcessor;
 var __webpack_exports__Swin2SRForImageSuperResolution = __webpack_exports__.Swin2SRForImageSuperResolution;
 var __webpack_exports__Swin2SRImageProcessor = __webpack_exports__.Swin2SRImageProcessor;
@@ -38215,6 +38384,7 @@ var __webpack_exports__permute_data = __webpack_exports__.permute_data;
 var __webpack_exports__pipeline = __webpack_exports__.pipeline;
 var __webpack_exports__quantize_embeddings = __webpack_exports__.quantize_embeddings;
 var __webpack_exports__rand = __webpack_exports__.rand;
+var __webpack_exports__randn = __webpack_exports__.randn;
 var __webpack_exports__read_audio = __webpack_exports__.read_audio;
 var __webpack_exports__rfft = __webpack_exports__.rfft;
 var __webpack_exports__round = __webpack_exports__.round;
@@ -38227,6 +38397,6 @@ var __webpack_exports__topk = __webpack_exports__.topk;
 var __webpack_exports__window_function = __webpack_exports__.window_function;
 var __webpack_exports__zeros = __webpack_exports__.zeros;
 var __webpack_exports__zeros_like = __webpack_exports__.zeros_like;
-export { __webpack_exports__ASTFeatureExtractor as ASTFeatureExtractor, __webpack_exports__ASTForAudioClassification as ASTForAudioClassification, __webpack_exports__ASTModel as ASTModel, __webpack_exports__ASTPreTrainedModel as ASTPreTrainedModel, __webpack_exports__AlbertForMaskedLM as AlbertForMaskedLM, __webpack_exports__AlbertForQuestionAnswering as AlbertForQuestionAnswering, __webpack_exports__AlbertForSequenceClassification as AlbertForSequenceClassification, __webpack_exports__AlbertModel as AlbertModel, __webpack_exports__AlbertPreTrainedModel as AlbertPreTrainedModel, __webpack_exports__AlbertTokenizer as AlbertTokenizer, __webpack_exports__ArceeForCausalLM as ArceeForCausalLM, __webpack_exports__ArceeModel as ArceeModel, __webpack_exports__ArceePreTrainedModel as ArceePreTrainedModel, __webpack_exports__AudioClassificationPipeline as AudioClassificationPipeline, __webpack_exports__AutoConfig as AutoConfig, __webpack_exports__AutoFeatureExtractor as AutoFeatureExtractor, __webpack_exports__AutoImageProcessor as AutoImageProcessor, __webpack_exports__AutoModel as AutoModel, __webpack_exports__AutoModelForAudioClassification as AutoModelForAudioClassification, __webpack_exports__AutoModelForAudioFrameClassification as AutoModelForAudioFrameClassification, __webpack_exports__AutoModelForAudioTextToText as AutoModelForAudioTextToText, __webpack_exports__AutoModelForCTC as AutoModelForCTC, __webpack_exports__AutoModelForCausalLM as AutoModelForCausalLM, __webpack_exports__AutoModelForDepthEstimation as AutoModelForDepthEstimation, __webpack_exports__AutoModelForDocumentQuestionAnswering as AutoModelForDocumentQuestionAnswering, __webpack_exports__AutoModelForImageClassification as AutoModelForImageClassification, __webpack_exports__AutoModelForImageFeatureExtraction as AutoModelForImageFeatureExtraction, __webpack_exports__AutoModelForImageMatting as AutoModelForImageMatting, __webpack_exports__AutoModelForImageSegmentation as AutoModelForImageSegmentation, __webpack_exports__AutoModelForImageTextToText as AutoModelForImageTextToText, __webpack_exports__AutoModelForImageToImage as AutoModelForImageToImage, __webpack_exports__AutoModelForMaskGeneration as AutoModelForMaskGeneration, __webpack_exports__AutoModelForMaskedLM as AutoModelForMaskedLM, __webpack_exports__AutoModelForNormalEstimation as AutoModelForNormalEstimation, __webpack_exports__AutoModelForObjectDetection as AutoModelForObjectDetection, __webpack_exports__AutoModelForPoseEstimation as AutoModelForPoseEstimation, __webpack_exports__AutoModelForQuestionAnswering as AutoModelForQuestionAnswering, __webpack_exports__AutoModelForSemanticSegmentation as AutoModelForSemanticSegmentation, __webpack_exports__AutoModelForSeq2SeqLM as AutoModelForSeq2SeqLM, __webpack_exports__AutoModelForSequenceClassification as AutoModelForSequenceClassification, __webpack_exports__AutoModelForSpeechSeq2Seq as AutoModelForSpeechSeq2Seq, __webpack_exports__AutoModelForTextToSpectrogram as AutoModelForTextToSpectrogram, __webpack_exports__AutoModelForTextToWaveform as AutoModelForTextToWaveform, __webpack_exports__AutoModelForTokenClassification as AutoModelForTokenClassification, __webpack_exports__AutoModelForUniversalSegmentation as AutoModelForUniversalSegmentation, __webpack_exports__AutoModelForVision2Seq as AutoModelForVision2Seq, __webpack_exports__AutoModelForXVector as AutoModelForXVector, __webpack_exports__AutoModelForZeroShotObjectDetection as AutoModelForZeroShotObjectDetection, __webpack_exports__AutoProcessor as AutoProcessor, __webpack_exports__AutoTokenizer as AutoTokenizer, __webpack_exports__AutomaticSpeechRecognitionPipeline as AutomaticSpeechRecognitionPipeline, __webpack_exports__BackgroundRemovalPipeline as BackgroundRemovalPipeline, __webpack_exports__BartForConditionalGeneration as BartForConditionalGeneration, __webpack_exports__BartForSequenceClassification as BartForSequenceClassification, __webpack_exports__BartModel as BartModel, __webpack_exports__BartPretrainedModel as BartPretrainedModel, __webpack_exports__BartTokenizer as BartTokenizer, __webpack_exports__BaseModelOutput as BaseModelOutput, __webpack_exports__BaseStreamer as BaseStreamer, __webpack_exports__BeitFeatureExtractor as BeitFeatureExtractor, __webpack_exports__BeitForImageClassification as BeitForImageClassification, __webpack_exports__BeitModel as BeitModel, __webpack_exports__BeitPreTrainedModel as BeitPreTrainedModel, __webpack_exports__BertForMaskedLM as BertForMaskedLM, __webpack_exports__BertForQuestionAnswering as BertForQuestionAnswering, __webpack_exports__BertForSequenceClassification as BertForSequenceClassification, __webpack_exports__BertForTokenClassification as BertForTokenClassification, __webpack_exports__BertModel as BertModel, __webpack_exports__BertPreTrainedModel as BertPreTrainedModel, __webpack_exports__BertTokenizer as BertTokenizer, __webpack_exports__BitImageProcessor as BitImageProcessor, __webpack_exports__BlenderbotForConditionalGeneration as BlenderbotForConditionalGeneration, __webpack_exports__BlenderbotModel as BlenderbotModel, __webpack_exports__BlenderbotPreTrainedModel as BlenderbotPreTrainedModel, __webpack_exports__BlenderbotSmallForConditionalGeneration as BlenderbotSmallForConditionalGeneration, __webpack_exports__BlenderbotSmallModel as BlenderbotSmallModel, __webpack_exports__BlenderbotSmallPreTrainedModel as BlenderbotSmallPreTrainedModel, __webpack_exports__BlenderbotSmallTokenizer as BlenderbotSmallTokenizer, __webpack_exports__BlenderbotTokenizer as BlenderbotTokenizer, __webpack_exports__BloomForCausalLM as BloomForCausalLM, __webpack_exports__BloomModel as BloomModel, __webpack_exports__BloomPreTrainedModel as BloomPreTrainedModel, __webpack_exports__BloomTokenizer as BloomTokenizer, __webpack_exports__CLIPFeatureExtractor as CLIPFeatureExtractor, __webpack_exports__CLIPImageProcessor as CLIPImageProcessor, __webpack_exports__CLIPModel as CLIPModel, __webpack_exports__CLIPPreTrainedModel as CLIPPreTrainedModel, __webpack_exports__CLIPSegForImageSegmentation as CLIPSegForImageSegmentation, __webpack_exports__CLIPSegModel as CLIPSegModel, __webpack_exports__CLIPSegPreTrainedModel as CLIPSegPreTrainedModel, __webpack_exports__CLIPTextModel as CLIPTextModel, __webpack_exports__CLIPTextModelWithProjection as CLIPTextModelWithProjection, __webpack_exports__CLIPTokenizer as CLIPTokenizer, __webpack_exports__CLIPVisionModel as CLIPVisionModel, __webpack_exports__CLIPVisionModelWithProjection as CLIPVisionModelWithProjection, __webpack_exports__CamembertForMaskedLM as CamembertForMaskedLM, __webpack_exports__CamembertForQuestionAnswering as CamembertForQuestionAnswering, __webpack_exports__CamembertForSequenceClassification as CamembertForSequenceClassification, __webpack_exports__CamembertForTokenClassification as CamembertForTokenClassification, __webpack_exports__CamembertModel as CamembertModel, __webpack_exports__CamembertPreTrainedModel as CamembertPreTrainedModel, __webpack_exports__CamembertTokenizer as CamembertTokenizer, __webpack_exports__CausalLMOutput as CausalLMOutput, __webpack_exports__CausalLMOutputWithPast as CausalLMOutputWithPast, __webpack_exports__ChineseCLIPFeatureExtractor as ChineseCLIPFeatureExtractor, __webpack_exports__ChineseCLIPModel as ChineseCLIPModel, __webpack_exports__ChineseCLIPPreTrainedModel as ChineseCLIPPreTrainedModel, __webpack_exports__ClapAudioModelWithProjection as ClapAudioModelWithProjection, __webpack_exports__ClapFeatureExtractor as ClapFeatureExtractor, __webpack_exports__ClapModel as ClapModel, __webpack_exports__ClapPreTrainedModel as ClapPreTrainedModel, __webpack_exports__ClapTextModelWithProjection as ClapTextModelWithProjection, __webpack_exports__ClassifierFreeGuidanceLogitsProcessor as ClassifierFreeGuidanceLogitsProcessor, __webpack_exports__CodeGenForCausalLM as CodeGenForCausalLM, __webpack_exports__CodeGenModel as CodeGenModel, __webpack_exports__CodeGenPreTrainedModel as CodeGenPreTrainedModel, __webpack_exports__CodeGenTokenizer as CodeGenTokenizer, __webpack_exports__CodeLlamaTokenizer as CodeLlamaTokenizer, __webpack_exports__CohereForCausalLM as CohereForCausalLM, __webpack_exports__CohereModel as CohereModel, __webpack_exports__CoherePreTrainedModel as CoherePreTrainedModel, __webpack_exports__CohereTokenizer as CohereTokenizer, __webpack_exports__ConvBertForMaskedLM as ConvBertForMaskedLM, __webpack_exports__ConvBertForQuestionAnswering as ConvBertForQuestionAnswering, __webpack_exports__ConvBertForSequenceClassification as ConvBertForSequenceClassification, __webpack_exports__ConvBertForTokenClassification as ConvBertForTokenClassification, __webpack_exports__ConvBertModel as ConvBertModel, __webpack_exports__ConvBertPreTrainedModel as ConvBertPreTrainedModel, __webpack_exports__ConvBertTokenizer as ConvBertTokenizer, __webpack_exports__ConvNextFeatureExtractor as ConvNextFeatureExtractor, __webpack_exports__ConvNextForImageClassification as ConvNextForImageClassification, __webpack_exports__ConvNextImageProcessor as ConvNextImageProcessor, __webpack_exports__ConvNextModel as ConvNextModel, __webpack_exports__ConvNextPreTrainedModel as ConvNextPreTrainedModel, __webpack_exports__ConvNextV2ForImageClassification as ConvNextV2ForImageClassification, __webpack_exports__ConvNextV2Model as ConvNextV2Model, __webpack_exports__ConvNextV2PreTrainedModel as ConvNextV2PreTrainedModel, __webpack_exports__DFineForObjectDetection as DFineForObjectDetection, __webpack_exports__DFineModel as DFineModel, __webpack_exports__DFinePreTrainedModel as DFinePreTrainedModel, __webpack_exports__DINOv3ConvNextModel as DINOv3ConvNextModel, __webpack_exports__DINOv3ConvNextPreTrainedModel as DINOv3ConvNextPreTrainedModel, __webpack_exports__DINOv3ViTImageProcessor as DINOv3ViTImageProcessor, __webpack_exports__DINOv3ViTModel as DINOv3ViTModel, __webpack_exports__DINOv3ViTPreTrainedModel as DINOv3ViTPreTrainedModel, __webpack_exports__DPTFeatureExtractor as DPTFeatureExtractor, __webpack_exports__DPTForDepthEstimation as DPTForDepthEstimation, __webpack_exports__DPTImageProcessor as DPTImageProcessor, __webpack_exports__DPTModel as DPTModel, __webpack_exports__DPTPreTrainedModel as DPTPreTrainedModel, __webpack_exports__DacDecoderModel as DacDecoderModel, __webpack_exports__DacDecoderOutput as DacDecoderOutput, __webpack_exports__DacEncoderModel as DacEncoderModel, __webpack_exports__DacEncoderOutput as DacEncoderOutput, __webpack_exports__DacFeatureExtractor as DacFeatureExtractor, __webpack_exports__DacModel as DacModel, __webpack_exports__DacPreTrainedModel as DacPreTrainedModel, __webpack_exports__DataTypeMap as DataTypeMap, __webpack_exports__DebertaForMaskedLM as DebertaForMaskedLM, __webpack_exports__DebertaForQuestionAnswering as DebertaForQuestionAnswering, __webpack_exports__DebertaForSequenceClassification as DebertaForSequenceClassification, __webpack_exports__DebertaForTokenClassification as DebertaForTokenClassification, __webpack_exports__DebertaModel as DebertaModel, __webpack_exports__DebertaPreTrainedModel as DebertaPreTrainedModel, __webpack_exports__DebertaTokenizer as DebertaTokenizer, __webpack_exports__DebertaV2ForMaskedLM as DebertaV2ForMaskedLM, __webpack_exports__DebertaV2ForQuestionAnswering as DebertaV2ForQuestionAnswering, __webpack_exports__DebertaV2ForSequenceClassification as DebertaV2ForSequenceClassification, __webpack_exports__DebertaV2ForTokenClassification as DebertaV2ForTokenClassification, __webpack_exports__DebertaV2Model as DebertaV2Model, __webpack_exports__DebertaV2PreTrainedModel as DebertaV2PreTrainedModel, __webpack_exports__DebertaV2Tokenizer as DebertaV2Tokenizer, __webpack_exports__DecisionTransformerModel as DecisionTransformerModel, __webpack_exports__DecisionTransformerPreTrainedModel as DecisionTransformerPreTrainedModel, __webpack_exports__DeiTFeatureExtractor as DeiTFeatureExtractor, __webpack_exports__DeiTForImageClassification as DeiTForImageClassification, __webpack_exports__DeiTImageProcessor as DeiTImageProcessor, __webpack_exports__DeiTModel as DeiTModel, __webpack_exports__DeiTPreTrainedModel as DeiTPreTrainedModel, __webpack_exports__DepthAnythingForDepthEstimation as DepthAnythingForDepthEstimation, __webpack_exports__DepthAnythingPreTrainedModel as DepthAnythingPreTrainedModel, __webpack_exports__DepthEstimationPipeline as DepthEstimationPipeline, __webpack_exports__DepthProForDepthEstimation as DepthProForDepthEstimation, __webpack_exports__DepthProPreTrainedModel as DepthProPreTrainedModel, __webpack_exports__DetrFeatureExtractor as DetrFeatureExtractor, __webpack_exports__DetrForObjectDetection as DetrForObjectDetection, __webpack_exports__DetrForSegmentation as DetrForSegmentation, __webpack_exports__DetrImageProcessor as DetrImageProcessor, __webpack_exports__DetrModel as DetrModel, __webpack_exports__DetrObjectDetectionOutput as DetrObjectDetectionOutput, __webpack_exports__DetrPreTrainedModel as DetrPreTrainedModel, __webpack_exports__DetrSegmentationOutput as DetrSegmentationOutput, __webpack_exports__Dinov2ForImageClassification as Dinov2ForImageClassification, __webpack_exports__Dinov2Model as Dinov2Model, __webpack_exports__Dinov2PreTrainedModel as Dinov2PreTrainedModel, __webpack_exports__Dinov2WithRegistersForImageClassification as Dinov2WithRegistersForImageClassification, __webpack_exports__Dinov2WithRegistersModel as Dinov2WithRegistersModel, __webpack_exports__Dinov2WithRegistersPreTrainedModel as Dinov2WithRegistersPreTrainedModel, __webpack_exports__DistilBertForMaskedLM as DistilBertForMaskedLM, __webpack_exports__DistilBertForQuestionAnswering as DistilBertForQuestionAnswering, __webpack_exports__DistilBertForSequenceClassification as DistilBertForSequenceClassification, __webpack_exports__DistilBertForTokenClassification as DistilBertForTokenClassification, __webpack_exports__DistilBertModel as DistilBertModel, __webpack_exports__DistilBertPreTrainedModel as DistilBertPreTrainedModel, __webpack_exports__DistilBertTokenizer as DistilBertTokenizer, __webpack_exports__DocumentQuestionAnsweringPipeline as DocumentQuestionAnsweringPipeline, __webpack_exports__DonutFeatureExtractor as DonutFeatureExtractor, __webpack_exports__DonutImageProcessor as DonutImageProcessor, __webpack_exports__DonutSwinModel as DonutSwinModel, __webpack_exports__DonutSwinPreTrainedModel as DonutSwinPreTrainedModel, __webpack_exports__EfficientNetForImageClassification as EfficientNetForImageClassification, __webpack_exports__EfficientNetImageProcessor as EfficientNetImageProcessor, __webpack_exports__EfficientNetModel as EfficientNetModel, __webpack_exports__EfficientNetPreTrainedModel as EfficientNetPreTrainedModel, __webpack_exports__ElectraForMaskedLM as ElectraForMaskedLM, __webpack_exports__ElectraForQuestionAnswering as ElectraForQuestionAnswering, __webpack_exports__ElectraForSequenceClassification as ElectraForSequenceClassification, __webpack_exports__ElectraForTokenClassification as ElectraForTokenClassification, __webpack_exports__ElectraModel as ElectraModel, __webpack_exports__ElectraPreTrainedModel as ElectraPreTrainedModel, __webpack_exports__ElectraTokenizer as ElectraTokenizer, __webpack_exports__EncodecFeatureExtractor as EncodecFeatureExtractor, __webpack_exports__EosTokenCriteria as EosTokenCriteria, __webpack_exports__Ernie4_5_ForCausalLM as Ernie4_5_ForCausalLM, __webpack_exports__Ernie4_5_Model as Ernie4_5_Model, __webpack_exports__Ernie4_5_PretrainedModel as Ernie4_5_PretrainedModel, __webpack_exports__Ernie4_5_Tokenizer as Ernie4_5_Tokenizer, __webpack_exports__EsmForMaskedLM as EsmForMaskedLM, __webpack_exports__EsmForSequenceClassification as EsmForSequenceClassification, __webpack_exports__EsmForTokenClassification as EsmForTokenClassification, __webpack_exports__EsmModel as EsmModel, __webpack_exports__EsmPreTrainedModel as EsmPreTrainedModel, __webpack_exports__EsmTokenizer as EsmTokenizer, __webpack_exports__ExaoneForCausalLM as ExaoneForCausalLM, __webpack_exports__ExaoneModel as ExaoneModel, __webpack_exports__ExaonePreTrainedModel as ExaonePreTrainedModel, __webpack_exports__FFT as FFT, __webpack_exports__FalconForCausalLM as FalconForCausalLM, __webpack_exports__FalconModel as FalconModel, __webpack_exports__FalconPreTrainedModel as FalconPreTrainedModel, __webpack_exports__FalconTokenizer as FalconTokenizer, __webpack_exports__FastViTForImageClassification as FastViTForImageClassification, __webpack_exports__FastViTModel as FastViTModel, __webpack_exports__FastViTPreTrainedModel as FastViTPreTrainedModel, __webpack_exports__FeatureExtractionPipeline as FeatureExtractionPipeline, __webpack_exports__FeatureExtractor as FeatureExtractor, __webpack_exports__FillMaskPipeline as FillMaskPipeline, __webpack_exports__Florence2ForConditionalGeneration as Florence2ForConditionalGeneration, __webpack_exports__Florence2PreTrainedModel as Florence2PreTrainedModel, __webpack_exports__Florence2Processor as Florence2Processor, __webpack_exports__ForcedBOSTokenLogitsProcessor as ForcedBOSTokenLogitsProcessor, __webpack_exports__ForcedEOSTokenLogitsProcessor as ForcedEOSTokenLogitsProcessor, __webpack_exports__GLPNFeatureExtractor as GLPNFeatureExtractor, __webpack_exports__GLPNForDepthEstimation as GLPNForDepthEstimation, __webpack_exports__GLPNModel as GLPNModel, __webpack_exports__GLPNPreTrainedModel as GLPNPreTrainedModel, __webpack_exports__GPT2LMHeadModel as GPT2LMHeadModel, __webpack_exports__GPT2Model as GPT2Model, __webpack_exports__GPT2PreTrainedModel as GPT2PreTrainedModel, __webpack_exports__GPT2Tokenizer as GPT2Tokenizer, __webpack_exports__GPTBigCodeForCausalLM as GPTBigCodeForCausalLM, __webpack_exports__GPTBigCodeModel as GPTBigCodeModel, __webpack_exports__GPTBigCodePreTrainedModel as GPTBigCodePreTrainedModel, __webpack_exports__GPTJForCausalLM as GPTJForCausalLM, __webpack_exports__GPTJModel as GPTJModel, __webpack_exports__GPTJPreTrainedModel as GPTJPreTrainedModel, __webpack_exports__GPTNeoForCausalLM as GPTNeoForCausalLM, __webpack_exports__GPTNeoModel as GPTNeoModel, __webpack_exports__GPTNeoPreTrainedModel as GPTNeoPreTrainedModel, __webpack_exports__GPTNeoXForCausalLM as GPTNeoXForCausalLM, __webpack_exports__GPTNeoXModel as GPTNeoXModel, __webpack_exports__GPTNeoXPreTrainedModel as GPTNeoXPreTrainedModel, __webpack_exports__GPTNeoXTokenizer as GPTNeoXTokenizer, __webpack_exports__Gemma2ForCausalLM as Gemma2ForCausalLM, __webpack_exports__Gemma2Model as Gemma2Model, __webpack_exports__Gemma2PreTrainedModel as Gemma2PreTrainedModel, __webpack_exports__Gemma3ForCausalLM as Gemma3ForCausalLM, __webpack_exports__Gemma3Model as Gemma3Model, __webpack_exports__Gemma3PreTrainedModel as Gemma3PreTrainedModel, __webpack_exports__Gemma3nAudioFeatureExtractor as Gemma3nAudioFeatureExtractor, __webpack_exports__Gemma3nForConditionalGeneration as Gemma3nForConditionalGeneration, __webpack_exports__Gemma3nPreTrainedModel as Gemma3nPreTrainedModel, __webpack_exports__Gemma3nProcessor as Gemma3nProcessor, __webpack_exports__GemmaForCausalLM as GemmaForCausalLM, __webpack_exports__GemmaModel as GemmaModel, __webpack_exports__GemmaPreTrainedModel as GemmaPreTrainedModel, __webpack_exports__GemmaTokenizer as GemmaTokenizer, __webpack_exports__GlmForCausalLM as GlmForCausalLM, __webpack_exports__GlmModel as GlmModel, __webpack_exports__GlmPreTrainedModel as GlmPreTrainedModel, __webpack_exports__GraniteForCausalLM as GraniteForCausalLM, __webpack_exports__GraniteModel as GraniteModel, __webpack_exports__GraniteMoeHybridForCausalLM as GraniteMoeHybridForCausalLM, __webpack_exports__GraniteMoeHybridModel as GraniteMoeHybridModel, __webpack_exports__GraniteMoeHybridPreTrainedModel as GraniteMoeHybridPreTrainedModel, __webpack_exports__GranitePreTrainedModel as GranitePreTrainedModel, __webpack_exports__Grok1Tokenizer as Grok1Tokenizer, __webpack_exports__GroundingDinoForObjectDetection as GroundingDinoForObjectDetection, __webpack_exports__GroundingDinoImageProcessor as GroundingDinoImageProcessor, __webpack_exports__GroundingDinoPreTrainedModel as GroundingDinoPreTrainedModel, __webpack_exports__GroundingDinoProcessor as GroundingDinoProcessor, __webpack_exports__GroupViTModel as GroupViTModel, __webpack_exports__GroupViTPreTrainedModel as GroupViTPreTrainedModel, __webpack_exports__HeliumForCausalLM as HeliumForCausalLM, __webpack_exports__HeliumModel as HeliumModel, __webpack_exports__HeliumPreTrainedModel as HeliumPreTrainedModel, __webpack_exports__HerbertTokenizer as HerbertTokenizer, __webpack_exports__HieraForImageClassification as HieraForImageClassification, __webpack_exports__HieraModel as HieraModel, __webpack_exports__HieraPreTrainedModel as HieraPreTrainedModel, __webpack_exports__HubertForCTC as HubertForCTC, __webpack_exports__HubertForSequenceClassification as HubertForSequenceClassification, __webpack_exports__HubertModel as HubertModel, __webpack_exports__HubertPreTrainedModel as HubertPreTrainedModel, __webpack_exports__IJepaForImageClassification as IJepaForImageClassification, __webpack_exports__IJepaModel as IJepaModel, __webpack_exports__IJepaPreTrainedModel as IJepaPreTrainedModel, __webpack_exports__Idefics3ForConditionalGeneration as Idefics3ForConditionalGeneration, __webpack_exports__Idefics3ImageProcessor as Idefics3ImageProcessor, __webpack_exports__Idefics3PreTrainedModel as Idefics3PreTrainedModel, __webpack_exports__Idefics3Processor as Idefics3Processor, __webpack_exports__ImageClassificationPipeline as ImageClassificationPipeline, __webpack_exports__ImageFeatureExtractionPipeline as ImageFeatureExtractionPipeline, __webpack_exports__ImageFeatureExtractor as ImageFeatureExtractor, __webpack_exports__ImageMattingOutput as ImageMattingOutput, __webpack_exports__ImageProcessor as ImageProcessor, __webpack_exports__ImageSegmentationPipeline as ImageSegmentationPipeline, __webpack_exports__ImageToImagePipeline as ImageToImagePipeline, __webpack_exports__ImageToTextPipeline as ImageToTextPipeline, __webpack_exports__InterruptableStoppingCriteria as InterruptableStoppingCriteria, __webpack_exports__JAISLMHeadModel as JAISLMHeadModel, __webpack_exports__JAISModel as JAISModel, __webpack_exports__JAISPreTrainedModel as JAISPreTrainedModel, __webpack_exports__JinaCLIPImageProcessor as JinaCLIPImageProcessor, __webpack_exports__JinaCLIPModel as JinaCLIPModel, __webpack_exports__JinaCLIPPreTrainedModel as JinaCLIPPreTrainedModel, __webpack_exports__JinaCLIPProcessor as JinaCLIPProcessor, __webpack_exports__JinaCLIPTextModel as JinaCLIPTextModel, __webpack_exports__JinaCLIPVisionModel as JinaCLIPVisionModel, __webpack_exports__Lfm2ForCausalLM as Lfm2ForCausalLM, __webpack_exports__Lfm2Model as Lfm2Model, __webpack_exports__Lfm2PreTrainedModel as Lfm2PreTrainedModel, __webpack_exports__LiteWhisperForConditionalGeneration as LiteWhisperForConditionalGeneration, __webpack_exports__Llama4ForCausalLM as Llama4ForCausalLM, __webpack_exports__Llama4PreTrainedModel as Llama4PreTrainedModel, __webpack_exports__LlamaForCausalLM as LlamaForCausalLM, __webpack_exports__LlamaModel as LlamaModel, __webpack_exports__LlamaPreTrainedModel as LlamaPreTrainedModel, __webpack_exports__LlamaTokenizer as LlamaTokenizer, __webpack_exports__LlavaForConditionalGeneration as LlavaForConditionalGeneration, __webpack_exports__LlavaOnevisionForConditionalGeneration as LlavaOnevisionForConditionalGeneration, __webpack_exports__LlavaOnevisionImageProcessor as LlavaOnevisionImageProcessor, __webpack_exports__LlavaPreTrainedModel as LlavaPreTrainedModel, __webpack_exports__LlavaProcessor as LlavaProcessor, __webpack_exports__LlavaQwen2ForCausalLM as LlavaQwen2ForCausalLM, __webpack_exports__LogitsProcessor as LogitsProcessor, __webpack_exports__LogitsProcessorList as LogitsProcessorList, __webpack_exports__LogitsWarper as LogitsWarper, __webpack_exports__LongT5ForConditionalGeneration as LongT5ForConditionalGeneration, __webpack_exports__LongT5Model as LongT5Model, __webpack_exports__LongT5PreTrainedModel as LongT5PreTrainedModel, __webpack_exports__M2M100ForConditionalGeneration as M2M100ForConditionalGeneration, __webpack_exports__M2M100Model as M2M100Model, __webpack_exports__M2M100PreTrainedModel as M2M100PreTrainedModel, __webpack_exports__M2M100Tokenizer as M2M100Tokenizer, __webpack_exports__MBart50Tokenizer as MBart50Tokenizer, __webpack_exports__MBartForCausalLM as MBartForCausalLM, __webpack_exports__MBartForConditionalGeneration as MBartForConditionalGeneration, __webpack_exports__MBartForSequenceClassification as MBartForSequenceClassification, __webpack_exports__MBartModel as MBartModel, __webpack_exports__MBartPreTrainedModel as MBartPreTrainedModel, __webpack_exports__MBartTokenizer as MBartTokenizer, __webpack_exports__MPNetForMaskedLM as MPNetForMaskedLM, __webpack_exports__MPNetForQuestionAnswering as MPNetForQuestionAnswering, __webpack_exports__MPNetForSequenceClassification as MPNetForSequenceClassification, __webpack_exports__MPNetForTokenClassification as MPNetForTokenClassification, __webpack_exports__MPNetModel as MPNetModel, __webpack_exports__MPNetPreTrainedModel as MPNetPreTrainedModel, __webpack_exports__MPNetTokenizer as MPNetTokenizer, __webpack_exports__MT5ForConditionalGeneration as MT5ForConditionalGeneration, __webpack_exports__MT5Model as MT5Model, __webpack_exports__MT5PreTrainedModel as MT5PreTrainedModel, __webpack_exports__MarianMTModel as MarianMTModel, __webpack_exports__MarianModel as MarianModel, __webpack_exports__MarianPreTrainedModel as MarianPreTrainedModel, __webpack_exports__MarianTokenizer as MarianTokenizer, __webpack_exports__Mask2FormerImageProcessor as Mask2FormerImageProcessor, __webpack_exports__MaskFormerFeatureExtractor as MaskFormerFeatureExtractor, __webpack_exports__MaskFormerForInstanceSegmentation as MaskFormerForInstanceSegmentation, __webpack_exports__MaskFormerImageProcessor as MaskFormerImageProcessor, __webpack_exports__MaskFormerModel as MaskFormerModel, __webpack_exports__MaskFormerPreTrainedModel as MaskFormerPreTrainedModel, __webpack_exports__MaskedLMOutput as MaskedLMOutput, __webpack_exports__MaxLengthCriteria as MaxLengthCriteria, __webpack_exports__Metric3DForDepthEstimation as Metric3DForDepthEstimation, __webpack_exports__Metric3DPreTrainedModel as Metric3DPreTrainedModel, __webpack_exports__Metric3Dv2ForDepthEstimation as Metric3Dv2ForDepthEstimation, __webpack_exports__Metric3Dv2PreTrainedModel as Metric3Dv2PreTrainedModel, __webpack_exports__MgpstrForSceneTextRecognition as MgpstrForSceneTextRecognition, __webpack_exports__MgpstrModelOutput as MgpstrModelOutput, __webpack_exports__MgpstrPreTrainedModel as MgpstrPreTrainedModel, __webpack_exports__MgpstrProcessor as MgpstrProcessor, __webpack_exports__MgpstrTokenizer as MgpstrTokenizer, __webpack_exports__MimiDecoderModel as MimiDecoderModel, __webpack_exports__MimiDecoderOutput as MimiDecoderOutput, __webpack_exports__MimiEncoderModel as MimiEncoderModel, __webpack_exports__MimiEncoderOutput as MimiEncoderOutput, __webpack_exports__MimiModel as MimiModel, __webpack_exports__MimiPreTrainedModel as MimiPreTrainedModel, __webpack_exports__MinLengthLogitsProcessor as MinLengthLogitsProcessor, __webpack_exports__MinNewTokensLengthLogitsProcessor as MinNewTokensLengthLogitsProcessor, __webpack_exports__MistralForCausalLM as MistralForCausalLM, __webpack_exports__MistralModel as MistralModel, __webpack_exports__MistralPreTrainedModel as MistralPreTrainedModel, __webpack_exports__MobileBertForMaskedLM as MobileBertForMaskedLM, __webpack_exports__MobileBertForQuestionAnswering as MobileBertForQuestionAnswering, __webpack_exports__MobileBertForSequenceClassification as MobileBertForSequenceClassification, __webpack_exports__MobileBertModel as MobileBertModel, __webpack_exports__MobileBertPreTrainedModel as MobileBertPreTrainedModel, __webpack_exports__MobileBertTokenizer as MobileBertTokenizer, __webpack_exports__MobileLLMForCausalLM as MobileLLMForCausalLM, __webpack_exports__MobileLLMModel as MobileLLMModel, __webpack_exports__MobileLLMPreTrainedModel as MobileLLMPreTrainedModel, __webpack_exports__MobileNetV1FeatureExtractor as MobileNetV1FeatureExtractor, __webpack_exports__MobileNetV1ForImageClassification as MobileNetV1ForImageClassification, __webpack_exports__MobileNetV1ForSemanticSegmentation as MobileNetV1ForSemanticSegmentation, __webpack_exports__MobileNetV1ImageProcessor as MobileNetV1ImageProcessor, __webpack_exports__MobileNetV1Model as MobileNetV1Model, __webpack_exports__MobileNetV1PreTrainedModel as MobileNetV1PreTrainedModel, __webpack_exports__MobileNetV2FeatureExtractor as MobileNetV2FeatureExtractor, __webpack_exports__MobileNetV2ForImageClassification as MobileNetV2ForImageClassification, __webpack_exports__MobileNetV2ForSemanticSegmentation as MobileNetV2ForSemanticSegmentation, __webpack_exports__MobileNetV2ImageProcessor as MobileNetV2ImageProcessor, __webpack_exports__MobileNetV2Model as MobileNetV2Model, __webpack_exports__MobileNetV2PreTrainedModel as MobileNetV2PreTrainedModel, __webpack_exports__MobileNetV3FeatureExtractor as MobileNetV3FeatureExtractor, __webpack_exports__MobileNetV3ForImageClassification as MobileNetV3ForImageClassification, __webpack_exports__MobileNetV3ForSemanticSegmentation as MobileNetV3ForSemanticSegmentation, __webpack_exports__MobileNetV3ImageProcessor as MobileNetV3ImageProcessor, __webpack_exports__MobileNetV3Model as MobileNetV3Model, __webpack_exports__MobileNetV3PreTrainedModel as MobileNetV3PreTrainedModel, __webpack_exports__MobileNetV4FeatureExtractor as MobileNetV4FeatureExtractor, __webpack_exports__MobileNetV4ForImageClassification as MobileNetV4ForImageClassification, __webpack_exports__MobileNetV4ForSemanticSegmentation as MobileNetV4ForSemanticSegmentation, __webpack_exports__MobileNetV4ImageProcessor as MobileNetV4ImageProcessor, __webpack_exports__MobileNetV4Model as MobileNetV4Model, __webpack_exports__MobileNetV4PreTrainedModel as MobileNetV4PreTrainedModel, __webpack_exports__MobileViTFeatureExtractor as MobileViTFeatureExtractor, __webpack_exports__MobileViTForImageClassification as MobileViTForImageClassification, __webpack_exports__MobileViTImageProcessor as MobileViTImageProcessor, __webpack_exports__MobileViTModel as MobileViTModel, __webpack_exports__MobileViTPreTrainedModel as MobileViTPreTrainedModel, __webpack_exports__MobileViTV2ForImageClassification as MobileViTV2ForImageClassification, __webpack_exports__MobileViTV2Model as MobileViTV2Model, __webpack_exports__MobileViTV2PreTrainedModel as MobileViTV2PreTrainedModel, __webpack_exports__ModelOutput as ModelOutput, __webpack_exports__ModernBertDecoderForCausalLM as ModernBertDecoderForCausalLM, __webpack_exports__ModernBertDecoderModel as ModernBertDecoderModel, __webpack_exports__ModernBertDecoderPreTrainedModel as ModernBertDecoderPreTrainedModel, __webpack_exports__ModernBertForMaskedLM as ModernBertForMaskedLM, __webpack_exports__ModernBertForSequenceClassification as ModernBertForSequenceClassification, __webpack_exports__ModernBertForTokenClassification as ModernBertForTokenClassification, __webpack_exports__ModernBertModel as ModernBertModel, __webpack_exports__ModernBertPreTrainedModel as ModernBertPreTrainedModel, __webpack_exports__Moondream1ForConditionalGeneration as Moondream1ForConditionalGeneration, __webpack_exports__MoonshineFeatureExtractor as MoonshineFeatureExtractor, __webpack_exports__MoonshineForConditionalGeneration as MoonshineForConditionalGeneration, __webpack_exports__MoonshineModel as MoonshineModel, __webpack_exports__MoonshinePreTrainedModel as MoonshinePreTrainedModel, __webpack_exports__MoonshineProcessor as MoonshineProcessor, __webpack_exports__MptForCausalLM as MptForCausalLM, __webpack_exports__MptModel as MptModel, __webpack_exports__MptPreTrainedModel as MptPreTrainedModel, __webpack_exports__MultiModalityCausalLM as MultiModalityCausalLM, __webpack_exports__MultiModalityPreTrainedModel as MultiModalityPreTrainedModel, __webpack_exports__MusicgenForCausalLM as MusicgenForCausalLM, __webpack_exports__MusicgenForConditionalGeneration as MusicgenForConditionalGeneration, __webpack_exports__MusicgenModel as MusicgenModel, __webpack_exports__MusicgenPreTrainedModel as MusicgenPreTrainedModel, __webpack_exports__NanoChatForCausalLM as NanoChatForCausalLM, __webpack_exports__NanoChatModel as NanoChatModel, __webpack_exports__NanoChatPreTrainedModel as NanoChatPreTrainedModel, __webpack_exports__NeoBertForMaskedLM as NeoBertForMaskedLM, __webpack_exports__NeoBertForQuestionAnswering as NeoBertForQuestionAnswering, __webpack_exports__NeoBertForSequenceClassification as NeoBertForSequenceClassification, __webpack_exports__NeoBertForTokenClassification as NeoBertForTokenClassification, __webpack_exports__NeoBertModel as NeoBertModel, __webpack_exports__NeoBertPreTrainedModel as NeoBertPreTrainedModel, __webpack_exports__NllbTokenizer as NllbTokenizer, __webpack_exports__NoBadWordsLogitsProcessor as NoBadWordsLogitsProcessor, __webpack_exports__NoRepeatNGramLogitsProcessor as NoRepeatNGramLogitsProcessor, __webpack_exports__NomicBertModel as NomicBertModel, __webpack_exports__NomicBertPreTrainedModel as NomicBertPreTrainedModel, __webpack_exports__NougatImageProcessor as NougatImageProcessor, __webpack_exports__NougatTokenizer as NougatTokenizer, __webpack_exports__OPTForCausalLM as OPTForCausalLM, __webpack_exports__OPTModel as OPTModel, __webpack_exports__OPTPreTrainedModel as OPTPreTrainedModel, __webpack_exports__ObjectDetectionPipeline as ObjectDetectionPipeline, __webpack_exports__Olmo2ForCausalLM as Olmo2ForCausalLM, __webpack_exports__Olmo2Model as Olmo2Model, __webpack_exports__Olmo2PreTrainedModel as Olmo2PreTrainedModel, __webpack_exports__OlmoForCausalLM as OlmoForCausalLM, __webpack_exports__OlmoModel as OlmoModel, __webpack_exports__OlmoPreTrainedModel as OlmoPreTrainedModel, __webpack_exports__OpenELMForCausalLM as OpenELMForCausalLM, __webpack_exports__OpenELMModel as OpenELMModel, __webpack_exports__OpenELMPreTrainedModel as OpenELMPreTrainedModel, __webpack_exports__OwlViTFeatureExtractor as OwlViTFeatureExtractor, __webpack_exports__OwlViTForObjectDetection as OwlViTForObjectDetection, __webpack_exports__OwlViTImageProcessor as OwlViTImageProcessor, __webpack_exports__OwlViTModel as OwlViTModel, __webpack_exports__OwlViTPreTrainedModel as OwlViTPreTrainedModel, __webpack_exports__OwlViTProcessor as OwlViTProcessor, __webpack_exports__Owlv2ForObjectDetection as Owlv2ForObjectDetection, __webpack_exports__Owlv2ImageProcessor as Owlv2ImageProcessor, __webpack_exports__Owlv2Model as Owlv2Model, __webpack_exports__Owlv2PreTrainedModel as Owlv2PreTrainedModel, __webpack_exports__PaliGemmaForConditionalGeneration as PaliGemmaForConditionalGeneration, __webpack_exports__PaliGemmaPreTrainedModel as PaliGemmaPreTrainedModel, __webpack_exports__PaliGemmaProcessor as PaliGemmaProcessor, __webpack_exports__ParakeetFeatureExtractor as ParakeetFeatureExtractor, __webpack_exports__ParakeetForCTC as ParakeetForCTC, __webpack_exports__ParakeetPreTrainedModel as ParakeetPreTrainedModel, __webpack_exports__PatchTSMixerForPrediction as PatchTSMixerForPrediction, __webpack_exports__PatchTSMixerModel as PatchTSMixerModel, __webpack_exports__PatchTSMixerPreTrainedModel as PatchTSMixerPreTrainedModel, __webpack_exports__PatchTSTForPrediction as PatchTSTForPrediction, __webpack_exports__PatchTSTModel as PatchTSTModel, __webpack_exports__PatchTSTPreTrainedModel as PatchTSTPreTrainedModel, __webpack_exports__Phi3ForCausalLM as Phi3ForCausalLM, __webpack_exports__Phi3Model as Phi3Model, __webpack_exports__Phi3PreTrainedModel as Phi3PreTrainedModel, __webpack_exports__Phi3VForCausalLM as Phi3VForCausalLM, __webpack_exports__Phi3VImageProcessor as Phi3VImageProcessor, __webpack_exports__Phi3VPreTrainedModel as Phi3VPreTrainedModel, __webpack_exports__Phi3VProcessor as Phi3VProcessor, __webpack_exports__PhiForCausalLM as PhiForCausalLM, __webpack_exports__PhiModel as PhiModel, __webpack_exports__PhiPreTrainedModel as PhiPreTrainedModel, __webpack_exports__Pipeline as Pipeline, __webpack_exports__PreTrainedModel as PreTrainedModel, __webpack_exports__PreTrainedTokenizer as PreTrainedTokenizer, __webpack_exports__PretrainedConfig as PretrainedConfig, __webpack_exports__PretrainedMixin as PretrainedMixin, __webpack_exports__Processor as Processor, __webpack_exports__PvtForImageClassification as PvtForImageClassification, __webpack_exports__PvtImageProcessor as PvtImageProcessor, __webpack_exports__PvtModel as PvtModel, __webpack_exports__PvtPreTrainedModel as PvtPreTrainedModel, __webpack_exports__PyAnnoteFeatureExtractor as PyAnnoteFeatureExtractor, __webpack_exports__PyAnnoteForAudioFrameClassification as PyAnnoteForAudioFrameClassification, __webpack_exports__PyAnnoteModel as PyAnnoteModel, __webpack_exports__PyAnnotePreTrainedModel as PyAnnotePreTrainedModel, __webpack_exports__PyAnnoteProcessor as PyAnnoteProcessor, __webpack_exports__QuestionAnsweringModelOutput as QuestionAnsweringModelOutput, __webpack_exports__QuestionAnsweringPipeline as QuestionAnsweringPipeline, __webpack_exports__Qwen2ForCausalLM as Qwen2ForCausalLM, __webpack_exports__Qwen2Model as Qwen2Model, __webpack_exports__Qwen2PreTrainedModel as Qwen2PreTrainedModel, __webpack_exports__Qwen2Tokenizer as Qwen2Tokenizer, __webpack_exports__Qwen2VLForConditionalGeneration as Qwen2VLForConditionalGeneration, __webpack_exports__Qwen2VLImageProcessor as Qwen2VLImageProcessor, __webpack_exports__Qwen2VLPreTrainedModel as Qwen2VLPreTrainedModel, __webpack_exports__Qwen2VLProcessor as Qwen2VLProcessor, __webpack_exports__Qwen3ForCausalLM as Qwen3ForCausalLM, __webpack_exports__Qwen3Model as Qwen3Model, __webpack_exports__Qwen3PreTrainedModel as Qwen3PreTrainedModel, __webpack_exports__RFDetrForObjectDetection as RFDetrForObjectDetection, __webpack_exports__RFDetrModel as RFDetrModel, __webpack_exports__RFDetrObjectDetectionOutput as RFDetrObjectDetectionOutput, __webpack_exports__RFDetrPreTrainedModel as RFDetrPreTrainedModel, __webpack_exports__RTDetrForObjectDetection as RTDetrForObjectDetection, __webpack_exports__RTDetrImageProcessor as RTDetrImageProcessor, __webpack_exports__RTDetrModel as RTDetrModel, __webpack_exports__RTDetrObjectDetectionOutput as RTDetrObjectDetectionOutput, __webpack_exports__RTDetrPreTrainedModel as RTDetrPreTrainedModel, __webpack_exports__RTDetrV2ForObjectDetection as RTDetrV2ForObjectDetection, __webpack_exports__RTDetrV2Model as RTDetrV2Model, __webpack_exports__RTDetrV2ObjectDetectionOutput as RTDetrV2ObjectDetectionOutput, __webpack_exports__RTDetrV2PreTrainedModel as RTDetrV2PreTrainedModel, __webpack_exports__RawAudio as RawAudio, __webpack_exports__RawImage as RawImage, __webpack_exports__RawVideo as RawVideo, __webpack_exports__RawVideoFrame as RawVideoFrame, __webpack_exports__RepetitionPenaltyLogitsProcessor as RepetitionPenaltyLogitsProcessor, __webpack_exports__ResNetForImageClassification as ResNetForImageClassification, __webpack_exports__ResNetModel as ResNetModel, __webpack_exports__ResNetPreTrainedModel as ResNetPreTrainedModel, __webpack_exports__RoFormerForMaskedLM as RoFormerForMaskedLM, __webpack_exports__RoFormerForQuestionAnswering as RoFormerForQuestionAnswering, __webpack_exports__RoFormerForSequenceClassification as RoFormerForSequenceClassification, __webpack_exports__RoFormerForTokenClassification as RoFormerForTokenClassification, __webpack_exports__RoFormerModel as RoFormerModel, __webpack_exports__RoFormerPreTrainedModel as RoFormerPreTrainedModel, __webpack_exports__RoFormerTokenizer as RoFormerTokenizer, __webpack_exports__RobertaForMaskedLM as RobertaForMaskedLM, __webpack_exports__RobertaForQuestionAnswering as RobertaForQuestionAnswering, __webpack_exports__RobertaForSequenceClassification as RobertaForSequenceClassification, __webpack_exports__RobertaForTokenClassification as RobertaForTokenClassification, __webpack_exports__RobertaModel as RobertaModel, __webpack_exports__RobertaPreTrainedModel as RobertaPreTrainedModel, __webpack_exports__RobertaTokenizer as RobertaTokenizer, __webpack_exports__SamImageProcessor as SamImageProcessor, __webpack_exports__SamImageSegmentationOutput as SamImageSegmentationOutput, __webpack_exports__SamModel as SamModel, __webpack_exports__SamPreTrainedModel as SamPreTrainedModel, __webpack_exports__SamProcessor as SamProcessor, __webpack_exports__SapiensForDepthEstimation as SapiensForDepthEstimation, __webpack_exports__SapiensForNormalEstimation as SapiensForNormalEstimation, __webpack_exports__SapiensForSemanticSegmentation as SapiensForSemanticSegmentation, __webpack_exports__SapiensPreTrainedModel as SapiensPreTrainedModel, __webpack_exports__SeamlessM4TFeatureExtractor as SeamlessM4TFeatureExtractor, __webpack_exports__SegformerFeatureExtractor as SegformerFeatureExtractor, __webpack_exports__SegformerForImageClassification as SegformerForImageClassification, __webpack_exports__SegformerForSemanticSegmentation as SegformerForSemanticSegmentation, __webpack_exports__SegformerImageProcessor as SegformerImageProcessor, __webpack_exports__SegformerModel as SegformerModel, __webpack_exports__SegformerPreTrainedModel as SegformerPreTrainedModel, __webpack_exports__Seq2SeqLMOutput as Seq2SeqLMOutput, __webpack_exports__SequenceClassifierOutput as SequenceClassifierOutput, __webpack_exports__SiglipImageProcessor as SiglipImageProcessor, __webpack_exports__SiglipModel as SiglipModel, __webpack_exports__SiglipPreTrainedModel as SiglipPreTrainedModel, __webpack_exports__SiglipTextModel as SiglipTextModel, __webpack_exports__SiglipTokenizer as SiglipTokenizer, __webpack_exports__SiglipVisionModel as SiglipVisionModel, __webpack_exports__SmolLM3ForCausalLM as SmolLM3ForCausalLM, __webpack_exports__SmolLM3Model as SmolLM3Model, __webpack_exports__SmolLM3PreTrainedModel as SmolLM3PreTrainedModel, __webpack_exports__SmolVLMForConditionalGeneration as SmolVLMForConditionalGeneration, __webpack_exports__SmolVLMImageProcessor as SmolVLMImageProcessor, __webpack_exports__SmolVLMProcessor as SmolVLMProcessor, __webpack_exports__SnacDecoderModel as SnacDecoderModel, __webpack_exports__SnacEncoderModel as SnacEncoderModel, __webpack_exports__SnacFeatureExtractor as SnacFeatureExtractor, __webpack_exports__SnacModel as SnacModel, __webpack_exports__SnacPreTrainedModel as SnacPreTrainedModel, __webpack_exports__SpeechT5FeatureExtractor as SpeechT5FeatureExtractor, __webpack_exports__SpeechT5ForSpeechToText as SpeechT5ForSpeechToText, __webpack_exports__SpeechT5ForTextToSpeech as SpeechT5ForTextToSpeech, __webpack_exports__SpeechT5HifiGan as SpeechT5HifiGan, __webpack_exports__SpeechT5Model as SpeechT5Model, __webpack_exports__SpeechT5PreTrainedModel as SpeechT5PreTrainedModel, __webpack_exports__SpeechT5Processor as SpeechT5Processor, __webpack_exports__SpeechT5Tokenizer as SpeechT5Tokenizer, __webpack_exports__SqueezeBertForMaskedLM as SqueezeBertForMaskedLM, __webpack_exports__SqueezeBertForQuestionAnswering as SqueezeBertForQuestionAnswering, __webpack_exports__SqueezeBertForSequenceClassification as SqueezeBertForSequenceClassification, __webpack_exports__SqueezeBertModel as SqueezeBertModel, __webpack_exports__SqueezeBertPreTrainedModel as SqueezeBertPreTrainedModel, __webpack_exports__SqueezeBertTokenizer as SqueezeBertTokenizer, __webpack_exports__StableLmForCausalLM as StableLmForCausalLM, __webpack_exports__StableLmModel as StableLmModel, __webpack_exports__StableLmPreTrainedModel as StableLmPreTrainedModel, __webpack_exports__Starcoder2ForCausalLM as Starcoder2ForCausalLM, __webpack_exports__Starcoder2Model as Starcoder2Model, __webpack_exports__Starcoder2PreTrainedModel as Starcoder2PreTrainedModel, __webpack_exports__StoppingCriteria as StoppingCriteria, __webpack_exports__StoppingCriteriaList as StoppingCriteriaList, __webpack_exports__StyleTextToSpeech2Model as StyleTextToSpeech2Model, __webpack_exports__StyleTextToSpeech2PreTrainedModel as StyleTextToSpeech2PreTrainedModel, __webpack_exports__SummarizationPipeline as SummarizationPipeline, __webpack_exports__SuppressTokensAtBeginLogitsProcessor as SuppressTokensAtBeginLogitsProcessor, __webpack_exports__Swin2SRForImageSuperResolution as Swin2SRForImageSuperResolution, __webpack_exports__Swin2SRImageProcessor as Swin2SRImageProcessor, __webpack_exports__Swin2SRModel as Swin2SRModel, __webpack_exports__Swin2SRPreTrainedModel as Swin2SRPreTrainedModel, __webpack_exports__SwinForImageClassification as SwinForImageClassification, __webpack_exports__SwinForSemanticSegmentation as SwinForSemanticSegmentation, __webpack_exports__SwinModel as SwinModel, __webpack_exports__SwinPreTrainedModel as SwinPreTrainedModel, __webpack_exports__T5ForConditionalGeneration as T5ForConditionalGeneration, __webpack_exports__T5Model as T5Model, __webpack_exports__T5PreTrainedModel as T5PreTrainedModel, __webpack_exports__T5Tokenizer as T5Tokenizer, __webpack_exports__TableTransformerForObjectDetection as TableTransformerForObjectDetection, __webpack_exports__TableTransformerModel as TableTransformerModel, __webpack_exports__TableTransformerObjectDetectionOutput as TableTransformerObjectDetectionOutput, __webpack_exports__TableTransformerPreTrainedModel as TableTransformerPreTrainedModel, __webpack_exports__TemperatureLogitsWarper as TemperatureLogitsWarper, __webpack_exports__Tensor as Tensor, __webpack_exports__Text2TextGenerationPipeline as Text2TextGenerationPipeline, __webpack_exports__TextClassificationPipeline as TextClassificationPipeline, __webpack_exports__TextGenerationPipeline as TextGenerationPipeline, __webpack_exports__TextStreamer as TextStreamer, __webpack_exports__TextToAudioPipeline as TextToAudioPipeline, __webpack_exports__TokenClassificationPipeline as TokenClassificationPipeline, __webpack_exports__TokenClassifierOutput as TokenClassifierOutput, __webpack_exports__TokenizerModel as TokenizerModel, __webpack_exports__TopKLogitsWarper as TopKLogitsWarper, __webpack_exports__TopPLogitsWarper as TopPLogitsWarper, __webpack_exports__TrOCRForCausalLM as TrOCRForCausalLM, __webpack_exports__TrOCRPreTrainedModel as TrOCRPreTrainedModel, __webpack_exports__TranslationPipeline as TranslationPipeline, __webpack_exports__UltravoxModel as UltravoxModel, __webpack_exports__UltravoxPreTrainedModel as UltravoxPreTrainedModel, __webpack_exports__UltravoxProcessor as UltravoxProcessor, __webpack_exports__UniSpeechForCTC as UniSpeechForCTC, __webpack_exports__UniSpeechForSequenceClassification as UniSpeechForSequenceClassification, __webpack_exports__UniSpeechModel as UniSpeechModel, __webpack_exports__UniSpeechPreTrainedModel as UniSpeechPreTrainedModel, __webpack_exports__UniSpeechSatForAudioFrameClassification as UniSpeechSatForAudioFrameClassification, __webpack_exports__UniSpeechSatForCTC as UniSpeechSatForCTC, __webpack_exports__UniSpeechSatForSequenceClassification as UniSpeechSatForSequenceClassification, __webpack_exports__UniSpeechSatModel as UniSpeechSatModel, __webpack_exports__UniSpeechSatPreTrainedModel as UniSpeechSatPreTrainedModel, __webpack_exports__VLChatProcessor as VLChatProcessor, __webpack_exports__VLMImageProcessor as VLMImageProcessor, __webpack_exports__VaultGemmaForCausalLM as VaultGemmaForCausalLM, __webpack_exports__VaultGemmaModel as VaultGemmaModel, __webpack_exports__VaultGemmaPreTrainedModel as VaultGemmaPreTrainedModel, __webpack_exports__ViTFeatureExtractor as ViTFeatureExtractor, __webpack_exports__ViTForImageClassification as ViTForImageClassification, __webpack_exports__ViTImageProcessor as ViTImageProcessor, __webpack_exports__ViTMAEModel as ViTMAEModel, __webpack_exports__ViTMAEPreTrainedModel as ViTMAEPreTrainedModel, __webpack_exports__ViTMSNForImageClassification as ViTMSNForImageClassification, __webpack_exports__ViTMSNModel as ViTMSNModel, __webpack_exports__ViTMSNPreTrainedModel as ViTMSNPreTrainedModel, __webpack_exports__ViTModel as ViTModel, __webpack_exports__ViTPreTrainedModel as ViTPreTrainedModel, __webpack_exports__VisionEncoderDecoderModel as VisionEncoderDecoderModel, __webpack_exports__VitMatteForImageMatting as VitMatteForImageMatting, __webpack_exports__VitMatteImageProcessor as VitMatteImageProcessor, __webpack_exports__VitMattePreTrainedModel as VitMattePreTrainedModel, __webpack_exports__VitPoseForPoseEstimation as VitPoseForPoseEstimation, __webpack_exports__VitPoseImageProcessor as VitPoseImageProcessor, __webpack_exports__VitPosePreTrainedModel as VitPosePreTrainedModel, __webpack_exports__VitsModel as VitsModel, __webpack_exports__VitsModelOutput as VitsModelOutput, __webpack_exports__VitsPreTrainedModel as VitsPreTrainedModel, __webpack_exports__VitsTokenizer as VitsTokenizer, __webpack_exports__VoxtralForConditionalGeneration as VoxtralForConditionalGeneration, __webpack_exports__VoxtralProcessor as VoxtralProcessor, __webpack_exports__Wav2Vec2BertForCTC as Wav2Vec2BertForCTC, __webpack_exports__Wav2Vec2BertForSequenceClassification as Wav2Vec2BertForSequenceClassification, __webpack_exports__Wav2Vec2BertModel as Wav2Vec2BertModel, __webpack_exports__Wav2Vec2BertPreTrainedModel as Wav2Vec2BertPreTrainedModel, __webpack_exports__Wav2Vec2CTCTokenizer as Wav2Vec2CTCTokenizer, __webpack_exports__Wav2Vec2FeatureExtractor as Wav2Vec2FeatureExtractor, __webpack_exports__Wav2Vec2ForAudioFrameClassification as Wav2Vec2ForAudioFrameClassification, __webpack_exports__Wav2Vec2ForCTC as Wav2Vec2ForCTC, __webpack_exports__Wav2Vec2ForSequenceClassification as Wav2Vec2ForSequenceClassification, __webpack_exports__Wav2Vec2Model as Wav2Vec2Model, __webpack_exports__Wav2Vec2PreTrainedModel as Wav2Vec2PreTrainedModel, __webpack_exports__Wav2Vec2Processor as Wav2Vec2Processor, __webpack_exports__Wav2Vec2ProcessorWithLM as Wav2Vec2ProcessorWithLM, __webpack_exports__WavLMForAudioFrameClassification as WavLMForAudioFrameClassification, __webpack_exports__WavLMForCTC as WavLMForCTC, __webpack_exports__WavLMForSequenceClassification as WavLMForSequenceClassification, __webpack_exports__WavLMForXVector as WavLMForXVector, __webpack_exports__WavLMModel as WavLMModel, __webpack_exports__WavLMPreTrainedModel as WavLMPreTrainedModel, __webpack_exports__WeSpeakerFeatureExtractor as WeSpeakerFeatureExtractor, __webpack_exports__WeSpeakerResNetModel as WeSpeakerResNetModel, __webpack_exports__WeSpeakerResNetPreTrainedModel as WeSpeakerResNetPreTrainedModel, __webpack_exports__WhisperFeatureExtractor as WhisperFeatureExtractor, __webpack_exports__WhisperForConditionalGeneration as WhisperForConditionalGeneration, __webpack_exports__WhisperModel as WhisperModel, __webpack_exports__WhisperPreTrainedModel as WhisperPreTrainedModel, __webpack_exports__WhisperProcessor as WhisperProcessor, __webpack_exports__WhisperTextStreamer as WhisperTextStreamer, __webpack_exports__WhisperTimeStampLogitsProcessor as WhisperTimeStampLogitsProcessor, __webpack_exports__WhisperTokenizer as WhisperTokenizer, __webpack_exports__XLMForQuestionAnswering as XLMForQuestionAnswering, __webpack_exports__XLMForSequenceClassification as XLMForSequenceClassification, __webpack_exports__XLMForTokenClassification as XLMForTokenClassification, __webpack_exports__XLMModel as XLMModel, __webpack_exports__XLMPreTrainedModel as XLMPreTrainedModel, __webpack_exports__XLMRobertaForMaskedLM as XLMRobertaForMaskedLM, __webpack_exports__XLMRobertaForQuestionAnswering as XLMRobertaForQuestionAnswering, __webpack_exports__XLMRobertaForSequenceClassification as XLMRobertaForSequenceClassification, __webpack_exports__XLMRobertaForTokenClassification as XLMRobertaForTokenClassification, __webpack_exports__XLMRobertaModel as XLMRobertaModel, __webpack_exports__XLMRobertaPreTrainedModel as XLMRobertaPreTrainedModel, __webpack_exports__XLMRobertaTokenizer as XLMRobertaTokenizer, __webpack_exports__XLMTokenizer as XLMTokenizer, __webpack_exports__XLMWithLMHeadModel as XLMWithLMHeadModel, __webpack_exports__XVectorOutput as XVectorOutput, __webpack_exports__YolosFeatureExtractor as YolosFeatureExtractor, __webpack_exports__YolosForObjectDetection as YolosForObjectDetection, __webpack_exports__YolosImageProcessor as YolosImageProcessor, __webpack_exports__YolosModel as YolosModel, __webpack_exports__YolosObjectDetectionOutput as YolosObjectDetectionOutput, __webpack_exports__YolosPreTrainedModel as YolosPreTrainedModel, __webpack_exports__ZeroShotAudioClassificationPipeline as ZeroShotAudioClassificationPipeline, __webpack_exports__ZeroShotClassificationPipeline as ZeroShotClassificationPipeline, __webpack_exports__ZeroShotImageClassificationPipeline as ZeroShotImageClassificationPipeline, __webpack_exports__ZeroShotObjectDetectionPipeline as ZeroShotObjectDetectionPipeline, __webpack_exports__bankers_round as bankers_round, __webpack_exports__cat as cat, __webpack_exports__cos_sim as cos_sim, __webpack_exports__dot as dot, __webpack_exports__dynamic_time_warping as dynamic_time_warping, __webpack_exports__env as env, __webpack_exports__full as full, __webpack_exports__full_like as full_like, __webpack_exports__getCacheShapes as getCacheShapes, __webpack_exports__hamming as hamming, __webpack_exports__hanning as hanning, __webpack_exports__interpolate as interpolate, __webpack_exports__interpolate_4d as interpolate_4d, __webpack_exports__interpolate_data as interpolate_data, __webpack_exports__is_chinese_char as is_chinese_char, __webpack_exports__layer_norm as layer_norm, __webpack_exports__load_image as load_image, __webpack_exports__load_video as load_video, __webpack_exports__log_softmax as log_softmax, __webpack_exports__magnitude as magnitude, __webpack_exports__matmul as matmul, __webpack_exports__max as max, __webpack_exports__mean as mean, __webpack_exports__mean_pooling as mean_pooling, __webpack_exports__medianFilter as medianFilter, __webpack_exports__mel_filter_bank as mel_filter_bank, __webpack_exports__min as min, __webpack_exports__ones as ones, __webpack_exports__ones_like as ones_like, __webpack_exports__permute as permute, __webpack_exports__permute_data as permute_data, __webpack_exports__pipeline as pipeline, __webpack_exports__quantize_embeddings as quantize_embeddings, __webpack_exports__rand as rand, __webpack_exports__read_audio as read_audio, __webpack_exports__rfft as rfft, __webpack_exports__round as round, __webpack_exports__slice as slice, __webpack_exports__softmax as softmax, __webpack_exports__spectrogram as spectrogram, __webpack_exports__stack as stack, __webpack_exports__std_mean as std_mean, __webpack_exports__topk as topk, __webpack_exports__window_function as window_function, __webpack_exports__zeros as zeros, __webpack_exports__zeros_like as zeros_like };
+export { __webpack_exports__ASTFeatureExtractor as ASTFeatureExtractor, __webpack_exports__ASTForAudioClassification as ASTForAudioClassification, __webpack_exports__ASTModel as ASTModel, __webpack_exports__ASTPreTrainedModel as ASTPreTrainedModel, __webpack_exports__AlbertForMaskedLM as AlbertForMaskedLM, __webpack_exports__AlbertForQuestionAnswering as AlbertForQuestionAnswering, __webpack_exports__AlbertForSequenceClassification as AlbertForSequenceClassification, __webpack_exports__AlbertModel as AlbertModel, __webpack_exports__AlbertPreTrainedModel as AlbertPreTrainedModel, __webpack_exports__AlbertTokenizer as AlbertTokenizer, __webpack_exports__ArceeForCausalLM as ArceeForCausalLM, __webpack_exports__ArceeModel as ArceeModel, __webpack_exports__ArceePreTrainedModel as ArceePreTrainedModel, __webpack_exports__AudioClassificationPipeline as AudioClassificationPipeline, __webpack_exports__AutoConfig as AutoConfig, __webpack_exports__AutoFeatureExtractor as AutoFeatureExtractor, __webpack_exports__AutoImageProcessor as AutoImageProcessor, __webpack_exports__AutoModel as AutoModel, __webpack_exports__AutoModelForAudioClassification as AutoModelForAudioClassification, __webpack_exports__AutoModelForAudioFrameClassification as AutoModelForAudioFrameClassification, __webpack_exports__AutoModelForAudioTextToText as AutoModelForAudioTextToText, __webpack_exports__AutoModelForCTC as AutoModelForCTC, __webpack_exports__AutoModelForCausalLM as AutoModelForCausalLM, __webpack_exports__AutoModelForDepthEstimation as AutoModelForDepthEstimation, __webpack_exports__AutoModelForDocumentQuestionAnswering as AutoModelForDocumentQuestionAnswering, __webpack_exports__AutoModelForImageClassification as AutoModelForImageClassification, __webpack_exports__AutoModelForImageFeatureExtraction as AutoModelForImageFeatureExtraction, __webpack_exports__AutoModelForImageMatting as AutoModelForImageMatting, __webpack_exports__AutoModelForImageSegmentation as AutoModelForImageSegmentation, __webpack_exports__AutoModelForImageTextToText as AutoModelForImageTextToText, __webpack_exports__AutoModelForImageToImage as AutoModelForImageToImage, __webpack_exports__AutoModelForMaskGeneration as AutoModelForMaskGeneration, __webpack_exports__AutoModelForMaskedLM as AutoModelForMaskedLM, __webpack_exports__AutoModelForNormalEstimation as AutoModelForNormalEstimation, __webpack_exports__AutoModelForObjectDetection as AutoModelForObjectDetection, __webpack_exports__AutoModelForPoseEstimation as AutoModelForPoseEstimation, __webpack_exports__AutoModelForQuestionAnswering as AutoModelForQuestionAnswering, __webpack_exports__AutoModelForSemanticSegmentation as AutoModelForSemanticSegmentation, __webpack_exports__AutoModelForSeq2SeqLM as AutoModelForSeq2SeqLM, __webpack_exports__AutoModelForSequenceClassification as AutoModelForSequenceClassification, __webpack_exports__AutoModelForSpeechSeq2Seq as AutoModelForSpeechSeq2Seq, __webpack_exports__AutoModelForTextToSpectrogram as AutoModelForTextToSpectrogram, __webpack_exports__AutoModelForTextToWaveform as AutoModelForTextToWaveform, __webpack_exports__AutoModelForTokenClassification as AutoModelForTokenClassification, __webpack_exports__AutoModelForUniversalSegmentation as AutoModelForUniversalSegmentation, __webpack_exports__AutoModelForVision2Seq as AutoModelForVision2Seq, __webpack_exports__AutoModelForXVector as AutoModelForXVector, __webpack_exports__AutoModelForZeroShotObjectDetection as AutoModelForZeroShotObjectDetection, __webpack_exports__AutoProcessor as AutoProcessor, __webpack_exports__AutoTokenizer as AutoTokenizer, __webpack_exports__AutomaticSpeechRecognitionPipeline as AutomaticSpeechRecognitionPipeline, __webpack_exports__BackgroundRemovalPipeline as BackgroundRemovalPipeline, __webpack_exports__BartForConditionalGeneration as BartForConditionalGeneration, __webpack_exports__BartForSequenceClassification as BartForSequenceClassification, __webpack_exports__BartModel as BartModel, __webpack_exports__BartPretrainedModel as BartPretrainedModel, __webpack_exports__BartTokenizer as BartTokenizer, __webpack_exports__BaseModelOutput as BaseModelOutput, __webpack_exports__BaseStreamer as BaseStreamer, __webpack_exports__BeitFeatureExtractor as BeitFeatureExtractor, __webpack_exports__BeitForImageClassification as BeitForImageClassification, __webpack_exports__BeitModel as BeitModel, __webpack_exports__BeitPreTrainedModel as BeitPreTrainedModel, __webpack_exports__BertForMaskedLM as BertForMaskedLM, __webpack_exports__BertForQuestionAnswering as BertForQuestionAnswering, __webpack_exports__BertForSequenceClassification as BertForSequenceClassification, __webpack_exports__BertForTokenClassification as BertForTokenClassification, __webpack_exports__BertModel as BertModel, __webpack_exports__BertPreTrainedModel as BertPreTrainedModel, __webpack_exports__BertTokenizer as BertTokenizer, __webpack_exports__BitImageProcessor as BitImageProcessor, __webpack_exports__BlenderbotForConditionalGeneration as BlenderbotForConditionalGeneration, __webpack_exports__BlenderbotModel as BlenderbotModel, __webpack_exports__BlenderbotPreTrainedModel as BlenderbotPreTrainedModel, __webpack_exports__BlenderbotSmallForConditionalGeneration as BlenderbotSmallForConditionalGeneration, __webpack_exports__BlenderbotSmallModel as BlenderbotSmallModel, __webpack_exports__BlenderbotSmallPreTrainedModel as BlenderbotSmallPreTrainedModel, __webpack_exports__BlenderbotSmallTokenizer as BlenderbotSmallTokenizer, __webpack_exports__BlenderbotTokenizer as BlenderbotTokenizer, __webpack_exports__BloomForCausalLM as BloomForCausalLM, __webpack_exports__BloomModel as BloomModel, __webpack_exports__BloomPreTrainedModel as BloomPreTrainedModel, __webpack_exports__BloomTokenizer as BloomTokenizer, __webpack_exports__CLIPFeatureExtractor as CLIPFeatureExtractor, __webpack_exports__CLIPImageProcessor as CLIPImageProcessor, __webpack_exports__CLIPModel as CLIPModel, __webpack_exports__CLIPPreTrainedModel as CLIPPreTrainedModel, __webpack_exports__CLIPSegForImageSegmentation as CLIPSegForImageSegmentation, __webpack_exports__CLIPSegModel as CLIPSegModel, __webpack_exports__CLIPSegPreTrainedModel as CLIPSegPreTrainedModel, __webpack_exports__CLIPTextModel as CLIPTextModel, __webpack_exports__CLIPTextModelWithProjection as CLIPTextModelWithProjection, __webpack_exports__CLIPTokenizer as CLIPTokenizer, __webpack_exports__CLIPVisionModel as CLIPVisionModel, __webpack_exports__CLIPVisionModelWithProjection as CLIPVisionModelWithProjection, __webpack_exports__CamembertForMaskedLM as CamembertForMaskedLM, __webpack_exports__CamembertForQuestionAnswering as CamembertForQuestionAnswering, __webpack_exports__CamembertForSequenceClassification as CamembertForSequenceClassification, __webpack_exports__CamembertForTokenClassification as CamembertForTokenClassification, __webpack_exports__CamembertModel as CamembertModel, __webpack_exports__CamembertPreTrainedModel as CamembertPreTrainedModel, __webpack_exports__CamembertTokenizer as CamembertTokenizer, __webpack_exports__CausalLMOutput as CausalLMOutput, __webpack_exports__CausalLMOutputWithPast as CausalLMOutputWithPast, __webpack_exports__ChineseCLIPFeatureExtractor as ChineseCLIPFeatureExtractor, __webpack_exports__ChineseCLIPModel as ChineseCLIPModel, __webpack_exports__ChineseCLIPPreTrainedModel as ChineseCLIPPreTrainedModel, __webpack_exports__ClapAudioModelWithProjection as ClapAudioModelWithProjection, __webpack_exports__ClapFeatureExtractor as ClapFeatureExtractor, __webpack_exports__ClapModel as ClapModel, __webpack_exports__ClapPreTrainedModel as ClapPreTrainedModel, __webpack_exports__ClapTextModelWithProjection as ClapTextModelWithProjection, __webpack_exports__ClassifierFreeGuidanceLogitsProcessor as ClassifierFreeGuidanceLogitsProcessor, __webpack_exports__CodeGenForCausalLM as CodeGenForCausalLM, __webpack_exports__CodeGenModel as CodeGenModel, __webpack_exports__CodeGenPreTrainedModel as CodeGenPreTrainedModel, __webpack_exports__CodeGenTokenizer as CodeGenTokenizer, __webpack_exports__CodeLlamaTokenizer as CodeLlamaTokenizer, __webpack_exports__CohereForCausalLM as CohereForCausalLM, __webpack_exports__CohereModel as CohereModel, __webpack_exports__CoherePreTrainedModel as CoherePreTrainedModel, __webpack_exports__CohereTokenizer as CohereTokenizer, __webpack_exports__ConvBertForMaskedLM as ConvBertForMaskedLM, __webpack_exports__ConvBertForQuestionAnswering as ConvBertForQuestionAnswering, __webpack_exports__ConvBertForSequenceClassification as ConvBertForSequenceClassification, __webpack_exports__ConvBertForTokenClassification as ConvBertForTokenClassification, __webpack_exports__ConvBertModel as ConvBertModel, __webpack_exports__ConvBertPreTrainedModel as ConvBertPreTrainedModel, __webpack_exports__ConvBertTokenizer as ConvBertTokenizer, __webpack_exports__ConvNextFeatureExtractor as ConvNextFeatureExtractor, __webpack_exports__ConvNextForImageClassification as ConvNextForImageClassification, __webpack_exports__ConvNextImageProcessor as ConvNextImageProcessor, __webpack_exports__ConvNextModel as ConvNextModel, __webpack_exports__ConvNextPreTrainedModel as ConvNextPreTrainedModel, __webpack_exports__ConvNextV2ForImageClassification as ConvNextV2ForImageClassification, __webpack_exports__ConvNextV2Model as ConvNextV2Model, __webpack_exports__ConvNextV2PreTrainedModel as ConvNextV2PreTrainedModel, __webpack_exports__DFineForObjectDetection as DFineForObjectDetection, __webpack_exports__DFineModel as DFineModel, __webpack_exports__DFinePreTrainedModel as DFinePreTrainedModel, __webpack_exports__DINOv3ConvNextModel as DINOv3ConvNextModel, __webpack_exports__DINOv3ConvNextPreTrainedModel as DINOv3ConvNextPreTrainedModel, __webpack_exports__DINOv3ViTImageProcessor as DINOv3ViTImageProcessor, __webpack_exports__DINOv3ViTModel as DINOv3ViTModel, __webpack_exports__DINOv3ViTPreTrainedModel as DINOv3ViTPreTrainedModel, __webpack_exports__DPTFeatureExtractor as DPTFeatureExtractor, __webpack_exports__DPTForDepthEstimation as DPTForDepthEstimation, __webpack_exports__DPTImageProcessor as DPTImageProcessor, __webpack_exports__DPTModel as DPTModel, __webpack_exports__DPTPreTrainedModel as DPTPreTrainedModel, __webpack_exports__DacDecoderModel as DacDecoderModel, __webpack_exports__DacDecoderOutput as DacDecoderOutput, __webpack_exports__DacEncoderModel as DacEncoderModel, __webpack_exports__DacEncoderOutput as DacEncoderOutput, __webpack_exports__DacFeatureExtractor as DacFeatureExtractor, __webpack_exports__DacModel as DacModel, __webpack_exports__DacPreTrainedModel as DacPreTrainedModel, __webpack_exports__DataTypeMap as DataTypeMap, __webpack_exports__DebertaForMaskedLM as DebertaForMaskedLM, __webpack_exports__DebertaForQuestionAnswering as DebertaForQuestionAnswering, __webpack_exports__DebertaForSequenceClassification as DebertaForSequenceClassification, __webpack_exports__DebertaForTokenClassification as DebertaForTokenClassification, __webpack_exports__DebertaModel as DebertaModel, __webpack_exports__DebertaPreTrainedModel as DebertaPreTrainedModel, __webpack_exports__DebertaTokenizer as DebertaTokenizer, __webpack_exports__DebertaV2ForMaskedLM as DebertaV2ForMaskedLM, __webpack_exports__DebertaV2ForQuestionAnswering as DebertaV2ForQuestionAnswering, __webpack_exports__DebertaV2ForSequenceClassification as DebertaV2ForSequenceClassification, __webpack_exports__DebertaV2ForTokenClassification as DebertaV2ForTokenClassification, __webpack_exports__DebertaV2Model as DebertaV2Model, __webpack_exports__DebertaV2PreTrainedModel as DebertaV2PreTrainedModel, __webpack_exports__DebertaV2Tokenizer as DebertaV2Tokenizer, __webpack_exports__DecisionTransformerModel as DecisionTransformerModel, __webpack_exports__DecisionTransformerPreTrainedModel as DecisionTransformerPreTrainedModel, __webpack_exports__DeiTFeatureExtractor as DeiTFeatureExtractor, __webpack_exports__DeiTForImageClassification as DeiTForImageClassification, __webpack_exports__DeiTImageProcessor as DeiTImageProcessor, __webpack_exports__DeiTModel as DeiTModel, __webpack_exports__DeiTPreTrainedModel as DeiTPreTrainedModel, __webpack_exports__DepthAnythingForDepthEstimation as DepthAnythingForDepthEstimation, __webpack_exports__DepthAnythingPreTrainedModel as DepthAnythingPreTrainedModel, __webpack_exports__DepthEstimationPipeline as DepthEstimationPipeline, __webpack_exports__DepthProForDepthEstimation as DepthProForDepthEstimation, __webpack_exports__DepthProPreTrainedModel as DepthProPreTrainedModel, __webpack_exports__DetrFeatureExtractor as DetrFeatureExtractor, __webpack_exports__DetrForObjectDetection as DetrForObjectDetection, __webpack_exports__DetrForSegmentation as DetrForSegmentation, __webpack_exports__DetrImageProcessor as DetrImageProcessor, __webpack_exports__DetrModel as DetrModel, __webpack_exports__DetrObjectDetectionOutput as DetrObjectDetectionOutput, __webpack_exports__DetrPreTrainedModel as DetrPreTrainedModel, __webpack_exports__DetrSegmentationOutput as DetrSegmentationOutput, __webpack_exports__Dinov2ForImageClassification as Dinov2ForImageClassification, __webpack_exports__Dinov2Model as Dinov2Model, __webpack_exports__Dinov2PreTrainedModel as Dinov2PreTrainedModel, __webpack_exports__Dinov2WithRegistersForImageClassification as Dinov2WithRegistersForImageClassification, __webpack_exports__Dinov2WithRegistersModel as Dinov2WithRegistersModel, __webpack_exports__Dinov2WithRegistersPreTrainedModel as Dinov2WithRegistersPreTrainedModel, __webpack_exports__DistilBertForMaskedLM as DistilBertForMaskedLM, __webpack_exports__DistilBertForQuestionAnswering as DistilBertForQuestionAnswering, __webpack_exports__DistilBertForSequenceClassification as DistilBertForSequenceClassification, __webpack_exports__DistilBertForTokenClassification as DistilBertForTokenClassification, __webpack_exports__DistilBertModel as DistilBertModel, __webpack_exports__DistilBertPreTrainedModel as DistilBertPreTrainedModel, __webpack_exports__DistilBertTokenizer as DistilBertTokenizer, __webpack_exports__DocumentQuestionAnsweringPipeline as DocumentQuestionAnsweringPipeline, __webpack_exports__DonutFeatureExtractor as DonutFeatureExtractor, __webpack_exports__DonutImageProcessor as DonutImageProcessor, __webpack_exports__DonutSwinModel as DonutSwinModel, __webpack_exports__DonutSwinPreTrainedModel as DonutSwinPreTrainedModel, __webpack_exports__EdgeTamModel as EdgeTamModel, __webpack_exports__EfficientNetForImageClassification as EfficientNetForImageClassification, __webpack_exports__EfficientNetImageProcessor as EfficientNetImageProcessor, __webpack_exports__EfficientNetModel as EfficientNetModel, __webpack_exports__EfficientNetPreTrainedModel as EfficientNetPreTrainedModel, __webpack_exports__ElectraForMaskedLM as ElectraForMaskedLM, __webpack_exports__ElectraForQuestionAnswering as ElectraForQuestionAnswering, __webpack_exports__ElectraForSequenceClassification as ElectraForSequenceClassification, __webpack_exports__ElectraForTokenClassification as ElectraForTokenClassification, __webpack_exports__ElectraModel as ElectraModel, __webpack_exports__ElectraPreTrainedModel as ElectraPreTrainedModel, __webpack_exports__ElectraTokenizer as ElectraTokenizer, __webpack_exports__EncodecFeatureExtractor as EncodecFeatureExtractor, __webpack_exports__EosTokenCriteria as EosTokenCriteria, __webpack_exports__Ernie4_5_ForCausalLM as Ernie4_5_ForCausalLM, __webpack_exports__Ernie4_5_Model as Ernie4_5_Model, __webpack_exports__Ernie4_5_PretrainedModel as Ernie4_5_PretrainedModel, __webpack_exports__Ernie4_5_Tokenizer as Ernie4_5_Tokenizer, __webpack_exports__EsmForMaskedLM as EsmForMaskedLM, __webpack_exports__EsmForSequenceClassification as EsmForSequenceClassification, __webpack_exports__EsmForTokenClassification as EsmForTokenClassification, __webpack_exports__EsmModel as EsmModel, __webpack_exports__EsmPreTrainedModel as EsmPreTrainedModel, __webpack_exports__EsmTokenizer as EsmTokenizer, __webpack_exports__ExaoneForCausalLM as ExaoneForCausalLM, __webpack_exports__ExaoneModel as ExaoneModel, __webpack_exports__ExaonePreTrainedModel as ExaonePreTrainedModel, __webpack_exports__FFT as FFT, __webpack_exports__FalconForCausalLM as FalconForCausalLM, __webpack_exports__FalconModel as FalconModel, __webpack_exports__FalconPreTrainedModel as FalconPreTrainedModel, __webpack_exports__FalconTokenizer as FalconTokenizer, __webpack_exports__FastViTForImageClassification as FastViTForImageClassification, __webpack_exports__FastViTModel as FastViTModel, __webpack_exports__FastViTPreTrainedModel as FastViTPreTrainedModel, __webpack_exports__FeatureExtractionPipeline as FeatureExtractionPipeline, __webpack_exports__FeatureExtractor as FeatureExtractor, __webpack_exports__FillMaskPipeline as FillMaskPipeline, __webpack_exports__Florence2ForConditionalGeneration as Florence2ForConditionalGeneration, __webpack_exports__Florence2PreTrainedModel as Florence2PreTrainedModel, __webpack_exports__Florence2Processor as Florence2Processor, __webpack_exports__ForcedBOSTokenLogitsProcessor as ForcedBOSTokenLogitsProcessor, __webpack_exports__ForcedEOSTokenLogitsProcessor as ForcedEOSTokenLogitsProcessor, __webpack_exports__GLPNFeatureExtractor as GLPNFeatureExtractor, __webpack_exports__GLPNForDepthEstimation as GLPNForDepthEstimation, __webpack_exports__GLPNModel as GLPNModel, __webpack_exports__GLPNPreTrainedModel as GLPNPreTrainedModel, __webpack_exports__GPT2LMHeadModel as GPT2LMHeadModel, __webpack_exports__GPT2Model as GPT2Model, __webpack_exports__GPT2PreTrainedModel as GPT2PreTrainedModel, __webpack_exports__GPT2Tokenizer as GPT2Tokenizer, __webpack_exports__GPTBigCodeForCausalLM as GPTBigCodeForCausalLM, __webpack_exports__GPTBigCodeModel as GPTBigCodeModel, __webpack_exports__GPTBigCodePreTrainedModel as GPTBigCodePreTrainedModel, __webpack_exports__GPTJForCausalLM as GPTJForCausalLM, __webpack_exports__GPTJModel as GPTJModel, __webpack_exports__GPTJPreTrainedModel as GPTJPreTrainedModel, __webpack_exports__GPTNeoForCausalLM as GPTNeoForCausalLM, __webpack_exports__GPTNeoModel as GPTNeoModel, __webpack_exports__GPTNeoPreTrainedModel as GPTNeoPreTrainedModel, __webpack_exports__GPTNeoXForCausalLM as GPTNeoXForCausalLM, __webpack_exports__GPTNeoXModel as GPTNeoXModel, __webpack_exports__GPTNeoXPreTrainedModel as GPTNeoXPreTrainedModel, __webpack_exports__GPTNeoXTokenizer as GPTNeoXTokenizer, __webpack_exports__Gemma2ForCausalLM as Gemma2ForCausalLM, __webpack_exports__Gemma2Model as Gemma2Model, __webpack_exports__Gemma2PreTrainedModel as Gemma2PreTrainedModel, __webpack_exports__Gemma3ForCausalLM as Gemma3ForCausalLM, __webpack_exports__Gemma3Model as Gemma3Model, __webpack_exports__Gemma3PreTrainedModel as Gemma3PreTrainedModel, __webpack_exports__Gemma3nAudioFeatureExtractor as Gemma3nAudioFeatureExtractor, __webpack_exports__Gemma3nForConditionalGeneration as Gemma3nForConditionalGeneration, __webpack_exports__Gemma3nPreTrainedModel as Gemma3nPreTrainedModel, __webpack_exports__Gemma3nProcessor as Gemma3nProcessor, __webpack_exports__GemmaForCausalLM as GemmaForCausalLM, __webpack_exports__GemmaModel as GemmaModel, __webpack_exports__GemmaPreTrainedModel as GemmaPreTrainedModel, __webpack_exports__GemmaTokenizer as GemmaTokenizer, __webpack_exports__GlmForCausalLM as GlmForCausalLM, __webpack_exports__GlmModel as GlmModel, __webpack_exports__GlmPreTrainedModel as GlmPreTrainedModel, __webpack_exports__GraniteForCausalLM as GraniteForCausalLM, __webpack_exports__GraniteModel as GraniteModel, __webpack_exports__GraniteMoeHybridForCausalLM as GraniteMoeHybridForCausalLM, __webpack_exports__GraniteMoeHybridModel as GraniteMoeHybridModel, __webpack_exports__GraniteMoeHybridPreTrainedModel as GraniteMoeHybridPreTrainedModel, __webpack_exports__GranitePreTrainedModel as GranitePreTrainedModel, __webpack_exports__Grok1Tokenizer as Grok1Tokenizer, __webpack_exports__GroundingDinoForObjectDetection as GroundingDinoForObjectDetection, __webpack_exports__GroundingDinoImageProcessor as GroundingDinoImageProcessor, __webpack_exports__GroundingDinoPreTrainedModel as GroundingDinoPreTrainedModel, __webpack_exports__GroundingDinoProcessor as GroundingDinoProcessor, __webpack_exports__GroupViTModel as GroupViTModel, __webpack_exports__GroupViTPreTrainedModel as GroupViTPreTrainedModel, __webpack_exports__HeliumForCausalLM as HeliumForCausalLM, __webpack_exports__HeliumModel as HeliumModel, __webpack_exports__HeliumPreTrainedModel as HeliumPreTrainedModel, __webpack_exports__HerbertTokenizer as HerbertTokenizer, __webpack_exports__HieraForImageClassification as HieraForImageClassification, __webpack_exports__HieraModel as HieraModel, __webpack_exports__HieraPreTrainedModel as HieraPreTrainedModel, __webpack_exports__HubertForCTC as HubertForCTC, __webpack_exports__HubertForSequenceClassification as HubertForSequenceClassification, __webpack_exports__HubertModel as HubertModel, __webpack_exports__HubertPreTrainedModel as HubertPreTrainedModel, __webpack_exports__IJepaForImageClassification as IJepaForImageClassification, __webpack_exports__IJepaModel as IJepaModel, __webpack_exports__IJepaPreTrainedModel as IJepaPreTrainedModel, __webpack_exports__Idefics3ForConditionalGeneration as Idefics3ForConditionalGeneration, __webpack_exports__Idefics3ImageProcessor as Idefics3ImageProcessor, __webpack_exports__Idefics3PreTrainedModel as Idefics3PreTrainedModel, __webpack_exports__Idefics3Processor as Idefics3Processor, __webpack_exports__ImageClassificationPipeline as ImageClassificationPipeline, __webpack_exports__ImageFeatureExtractionPipeline as ImageFeatureExtractionPipeline, __webpack_exports__ImageFeatureExtractor as ImageFeatureExtractor, __webpack_exports__ImageMattingOutput as ImageMattingOutput, __webpack_exports__ImageProcessor as ImageProcessor, __webpack_exports__ImageSegmentationPipeline as ImageSegmentationPipeline, __webpack_exports__ImageToImagePipeline as ImageToImagePipeline, __webpack_exports__ImageToTextPipeline as ImageToTextPipeline, __webpack_exports__InterruptableStoppingCriteria as InterruptableStoppingCriteria, __webpack_exports__JAISLMHeadModel as JAISLMHeadModel, __webpack_exports__JAISModel as JAISModel, __webpack_exports__JAISPreTrainedModel as JAISPreTrainedModel, __webpack_exports__JinaCLIPImageProcessor as JinaCLIPImageProcessor, __webpack_exports__JinaCLIPModel as JinaCLIPModel, __webpack_exports__JinaCLIPPreTrainedModel as JinaCLIPPreTrainedModel, __webpack_exports__JinaCLIPProcessor as JinaCLIPProcessor, __webpack_exports__JinaCLIPTextModel as JinaCLIPTextModel, __webpack_exports__JinaCLIPVisionModel as JinaCLIPVisionModel, __webpack_exports__Lfm2ForCausalLM as Lfm2ForCausalLM, __webpack_exports__Lfm2Model as Lfm2Model, __webpack_exports__Lfm2PreTrainedModel as Lfm2PreTrainedModel, __webpack_exports__LiteWhisperForConditionalGeneration as LiteWhisperForConditionalGeneration, __webpack_exports__Llama4ForCausalLM as Llama4ForCausalLM, __webpack_exports__Llama4PreTrainedModel as Llama4PreTrainedModel, __webpack_exports__LlamaForCausalLM as LlamaForCausalLM, __webpack_exports__LlamaModel as LlamaModel, __webpack_exports__LlamaPreTrainedModel as LlamaPreTrainedModel, __webpack_exports__LlamaTokenizer as LlamaTokenizer, __webpack_exports__LlavaForConditionalGeneration as LlavaForConditionalGeneration, __webpack_exports__LlavaOnevisionForConditionalGeneration as LlavaOnevisionForConditionalGeneration, __webpack_exports__LlavaOnevisionImageProcessor as LlavaOnevisionImageProcessor, __webpack_exports__LlavaPreTrainedModel as LlavaPreTrainedModel, __webpack_exports__LlavaProcessor as LlavaProcessor, __webpack_exports__LlavaQwen2ForCausalLM as LlavaQwen2ForCausalLM, __webpack_exports__LogitsProcessor as LogitsProcessor, __webpack_exports__LogitsProcessorList as LogitsProcessorList, __webpack_exports__LogitsWarper as LogitsWarper, __webpack_exports__LongT5ForConditionalGeneration as LongT5ForConditionalGeneration, __webpack_exports__LongT5Model as LongT5Model, __webpack_exports__LongT5PreTrainedModel as LongT5PreTrainedModel, __webpack_exports__M2M100ForConditionalGeneration as M2M100ForConditionalGeneration, __webpack_exports__M2M100Model as M2M100Model, __webpack_exports__M2M100PreTrainedModel as M2M100PreTrainedModel, __webpack_exports__M2M100Tokenizer as M2M100Tokenizer, __webpack_exports__MBart50Tokenizer as MBart50Tokenizer, __webpack_exports__MBartForCausalLM as MBartForCausalLM, __webpack_exports__MBartForConditionalGeneration as MBartForConditionalGeneration, __webpack_exports__MBartForSequenceClassification as MBartForSequenceClassification, __webpack_exports__MBartModel as MBartModel, __webpack_exports__MBartPreTrainedModel as MBartPreTrainedModel, __webpack_exports__MBartTokenizer as MBartTokenizer, __webpack_exports__MPNetForMaskedLM as MPNetForMaskedLM, __webpack_exports__MPNetForQuestionAnswering as MPNetForQuestionAnswering, __webpack_exports__MPNetForSequenceClassification as MPNetForSequenceClassification, __webpack_exports__MPNetForTokenClassification as MPNetForTokenClassification, __webpack_exports__MPNetModel as MPNetModel, __webpack_exports__MPNetPreTrainedModel as MPNetPreTrainedModel, __webpack_exports__MPNetTokenizer as MPNetTokenizer, __webpack_exports__MT5ForConditionalGeneration as MT5ForConditionalGeneration, __webpack_exports__MT5Model as MT5Model, __webpack_exports__MT5PreTrainedModel as MT5PreTrainedModel, __webpack_exports__MarianMTModel as MarianMTModel, __webpack_exports__MarianModel as MarianModel, __webpack_exports__MarianPreTrainedModel as MarianPreTrainedModel, __webpack_exports__MarianTokenizer as MarianTokenizer, __webpack_exports__Mask2FormerImageProcessor as Mask2FormerImageProcessor, __webpack_exports__MaskFormerFeatureExtractor as MaskFormerFeatureExtractor, __webpack_exports__MaskFormerForInstanceSegmentation as MaskFormerForInstanceSegmentation, __webpack_exports__MaskFormerImageProcessor as MaskFormerImageProcessor, __webpack_exports__MaskFormerModel as MaskFormerModel, __webpack_exports__MaskFormerPreTrainedModel as MaskFormerPreTrainedModel, __webpack_exports__MaskedLMOutput as MaskedLMOutput, __webpack_exports__MaxLengthCriteria as MaxLengthCriteria, __webpack_exports__Metric3DForDepthEstimation as Metric3DForDepthEstimation, __webpack_exports__Metric3DPreTrainedModel as Metric3DPreTrainedModel, __webpack_exports__Metric3Dv2ForDepthEstimation as Metric3Dv2ForDepthEstimation, __webpack_exports__Metric3Dv2PreTrainedModel as Metric3Dv2PreTrainedModel, __webpack_exports__MgpstrForSceneTextRecognition as MgpstrForSceneTextRecognition, __webpack_exports__MgpstrModelOutput as MgpstrModelOutput, __webpack_exports__MgpstrPreTrainedModel as MgpstrPreTrainedModel, __webpack_exports__MgpstrProcessor as MgpstrProcessor, __webpack_exports__MgpstrTokenizer as MgpstrTokenizer, __webpack_exports__MimiDecoderModel as MimiDecoderModel, __webpack_exports__MimiDecoderOutput as MimiDecoderOutput, __webpack_exports__MimiEncoderModel as MimiEncoderModel, __webpack_exports__MimiEncoderOutput as MimiEncoderOutput, __webpack_exports__MimiModel as MimiModel, __webpack_exports__MimiPreTrainedModel as MimiPreTrainedModel, __webpack_exports__MinLengthLogitsProcessor as MinLengthLogitsProcessor, __webpack_exports__MinNewTokensLengthLogitsProcessor as MinNewTokensLengthLogitsProcessor, __webpack_exports__MistralForCausalLM as MistralForCausalLM, __webpack_exports__MistralModel as MistralModel, __webpack_exports__MistralPreTrainedModel as MistralPreTrainedModel, __webpack_exports__MobileBertForMaskedLM as MobileBertForMaskedLM, __webpack_exports__MobileBertForQuestionAnswering as MobileBertForQuestionAnswering, __webpack_exports__MobileBertForSequenceClassification as MobileBertForSequenceClassification, __webpack_exports__MobileBertModel as MobileBertModel, __webpack_exports__MobileBertPreTrainedModel as MobileBertPreTrainedModel, __webpack_exports__MobileBertTokenizer as MobileBertTokenizer, __webpack_exports__MobileLLMForCausalLM as MobileLLMForCausalLM, __webpack_exports__MobileLLMModel as MobileLLMModel, __webpack_exports__MobileLLMPreTrainedModel as MobileLLMPreTrainedModel, __webpack_exports__MobileNetV1FeatureExtractor as MobileNetV1FeatureExtractor, __webpack_exports__MobileNetV1ForImageClassification as MobileNetV1ForImageClassification, __webpack_exports__MobileNetV1ForSemanticSegmentation as MobileNetV1ForSemanticSegmentation, __webpack_exports__MobileNetV1ImageProcessor as MobileNetV1ImageProcessor, __webpack_exports__MobileNetV1Model as MobileNetV1Model, __webpack_exports__MobileNetV1PreTrainedModel as MobileNetV1PreTrainedModel, __webpack_exports__MobileNetV2FeatureExtractor as MobileNetV2FeatureExtractor, __webpack_exports__MobileNetV2ForImageClassification as MobileNetV2ForImageClassification, __webpack_exports__MobileNetV2ForSemanticSegmentation as MobileNetV2ForSemanticSegmentation, __webpack_exports__MobileNetV2ImageProcessor as MobileNetV2ImageProcessor, __webpack_exports__MobileNetV2Model as MobileNetV2Model, __webpack_exports__MobileNetV2PreTrainedModel as MobileNetV2PreTrainedModel, __webpack_exports__MobileNetV3FeatureExtractor as MobileNetV3FeatureExtractor, __webpack_exports__MobileNetV3ForImageClassification as MobileNetV3ForImageClassification, __webpack_exports__MobileNetV3ForSemanticSegmentation as MobileNetV3ForSemanticSegmentation, __webpack_exports__MobileNetV3ImageProcessor as MobileNetV3ImageProcessor, __webpack_exports__MobileNetV3Model as MobileNetV3Model, __webpack_exports__MobileNetV3PreTrainedModel as MobileNetV3PreTrainedModel, __webpack_exports__MobileNetV4FeatureExtractor as MobileNetV4FeatureExtractor, __webpack_exports__MobileNetV4ForImageClassification as MobileNetV4ForImageClassification, __webpack_exports__MobileNetV4ForSemanticSegmentation as MobileNetV4ForSemanticSegmentation, __webpack_exports__MobileNetV4ImageProcessor as MobileNetV4ImageProcessor, __webpack_exports__MobileNetV4Model as MobileNetV4Model, __webpack_exports__MobileNetV4PreTrainedModel as MobileNetV4PreTrainedModel, __webpack_exports__MobileViTFeatureExtractor as MobileViTFeatureExtractor, __webpack_exports__MobileViTForImageClassification as MobileViTForImageClassification, __webpack_exports__MobileViTImageProcessor as MobileViTImageProcessor, __webpack_exports__MobileViTModel as MobileViTModel, __webpack_exports__MobileViTPreTrainedModel as MobileViTPreTrainedModel, __webpack_exports__MobileViTV2ForImageClassification as MobileViTV2ForImageClassification, __webpack_exports__MobileViTV2Model as MobileViTV2Model, __webpack_exports__MobileViTV2PreTrainedModel as MobileViTV2PreTrainedModel, __webpack_exports__ModelOutput as ModelOutput, __webpack_exports__ModernBertDecoderForCausalLM as ModernBertDecoderForCausalLM, __webpack_exports__ModernBertDecoderModel as ModernBertDecoderModel, __webpack_exports__ModernBertDecoderPreTrainedModel as ModernBertDecoderPreTrainedModel, __webpack_exports__ModernBertForMaskedLM as ModernBertForMaskedLM, __webpack_exports__ModernBertForSequenceClassification as ModernBertForSequenceClassification, __webpack_exports__ModernBertForTokenClassification as ModernBertForTokenClassification, __webpack_exports__ModernBertModel as ModernBertModel, __webpack_exports__ModernBertPreTrainedModel as ModernBertPreTrainedModel, __webpack_exports__Moondream1ForConditionalGeneration as Moondream1ForConditionalGeneration, __webpack_exports__MoonshineFeatureExtractor as MoonshineFeatureExtractor, __webpack_exports__MoonshineForConditionalGeneration as MoonshineForConditionalGeneration, __webpack_exports__MoonshineModel as MoonshineModel, __webpack_exports__MoonshinePreTrainedModel as MoonshinePreTrainedModel, __webpack_exports__MoonshineProcessor as MoonshineProcessor, __webpack_exports__MptForCausalLM as MptForCausalLM, __webpack_exports__MptModel as MptModel, __webpack_exports__MptPreTrainedModel as MptPreTrainedModel, __webpack_exports__MultiModalityCausalLM as MultiModalityCausalLM, __webpack_exports__MultiModalityPreTrainedModel as MultiModalityPreTrainedModel, __webpack_exports__MusicgenForCausalLM as MusicgenForCausalLM, __webpack_exports__MusicgenForConditionalGeneration as MusicgenForConditionalGeneration, __webpack_exports__MusicgenModel as MusicgenModel, __webpack_exports__MusicgenPreTrainedModel as MusicgenPreTrainedModel, __webpack_exports__NanoChatForCausalLM as NanoChatForCausalLM, __webpack_exports__NanoChatModel as NanoChatModel, __webpack_exports__NanoChatPreTrainedModel as NanoChatPreTrainedModel, __webpack_exports__NeoBertForMaskedLM as NeoBertForMaskedLM, __webpack_exports__NeoBertForQuestionAnswering as NeoBertForQuestionAnswering, __webpack_exports__NeoBertForSequenceClassification as NeoBertForSequenceClassification, __webpack_exports__NeoBertForTokenClassification as NeoBertForTokenClassification, __webpack_exports__NeoBertModel as NeoBertModel, __webpack_exports__NeoBertPreTrainedModel as NeoBertPreTrainedModel, __webpack_exports__NllbTokenizer as NllbTokenizer, __webpack_exports__NoBadWordsLogitsProcessor as NoBadWordsLogitsProcessor, __webpack_exports__NoRepeatNGramLogitsProcessor as NoRepeatNGramLogitsProcessor, __webpack_exports__NomicBertModel as NomicBertModel, __webpack_exports__NomicBertPreTrainedModel as NomicBertPreTrainedModel, __webpack_exports__NougatImageProcessor as NougatImageProcessor, __webpack_exports__NougatTokenizer as NougatTokenizer, __webpack_exports__OPTForCausalLM as OPTForCausalLM, __webpack_exports__OPTModel as OPTModel, __webpack_exports__OPTPreTrainedModel as OPTPreTrainedModel, __webpack_exports__ObjectDetectionPipeline as ObjectDetectionPipeline, __webpack_exports__Olmo2ForCausalLM as Olmo2ForCausalLM, __webpack_exports__Olmo2Model as Olmo2Model, __webpack_exports__Olmo2PreTrainedModel as Olmo2PreTrainedModel, __webpack_exports__OlmoForCausalLM as OlmoForCausalLM, __webpack_exports__OlmoModel as OlmoModel, __webpack_exports__OlmoPreTrainedModel as OlmoPreTrainedModel, __webpack_exports__OpenELMForCausalLM as OpenELMForCausalLM, __webpack_exports__OpenELMModel as OpenELMModel, __webpack_exports__OpenELMPreTrainedModel as OpenELMPreTrainedModel, __webpack_exports__OwlViTFeatureExtractor as OwlViTFeatureExtractor, __webpack_exports__OwlViTForObjectDetection as OwlViTForObjectDetection, __webpack_exports__OwlViTImageProcessor as OwlViTImageProcessor, __webpack_exports__OwlViTModel as OwlViTModel, __webpack_exports__OwlViTPreTrainedModel as OwlViTPreTrainedModel, __webpack_exports__OwlViTProcessor as OwlViTProcessor, __webpack_exports__Owlv2ForObjectDetection as Owlv2ForObjectDetection, __webpack_exports__Owlv2ImageProcessor as Owlv2ImageProcessor, __webpack_exports__Owlv2Model as Owlv2Model, __webpack_exports__Owlv2PreTrainedModel as Owlv2PreTrainedModel, __webpack_exports__PaliGemmaForConditionalGeneration as PaliGemmaForConditionalGeneration, __webpack_exports__PaliGemmaPreTrainedModel as PaliGemmaPreTrainedModel, __webpack_exports__PaliGemmaProcessor as PaliGemmaProcessor, __webpack_exports__ParakeetFeatureExtractor as ParakeetFeatureExtractor, __webpack_exports__ParakeetForCTC as ParakeetForCTC, __webpack_exports__ParakeetPreTrainedModel as ParakeetPreTrainedModel, __webpack_exports__PatchTSMixerForPrediction as PatchTSMixerForPrediction, __webpack_exports__PatchTSMixerModel as PatchTSMixerModel, __webpack_exports__PatchTSMixerPreTrainedModel as PatchTSMixerPreTrainedModel, __webpack_exports__PatchTSTForPrediction as PatchTSTForPrediction, __webpack_exports__PatchTSTModel as PatchTSTModel, __webpack_exports__PatchTSTPreTrainedModel as PatchTSTPreTrainedModel, __webpack_exports__Phi3ForCausalLM as Phi3ForCausalLM, __webpack_exports__Phi3Model as Phi3Model, __webpack_exports__Phi3PreTrainedModel as Phi3PreTrainedModel, __webpack_exports__Phi3VForCausalLM as Phi3VForCausalLM, __webpack_exports__Phi3VImageProcessor as Phi3VImageProcessor, __webpack_exports__Phi3VPreTrainedModel as Phi3VPreTrainedModel, __webpack_exports__Phi3VProcessor as Phi3VProcessor, __webpack_exports__PhiForCausalLM as PhiForCausalLM, __webpack_exports__PhiModel as PhiModel, __webpack_exports__PhiPreTrainedModel as PhiPreTrainedModel, __webpack_exports__Pipeline as Pipeline, __webpack_exports__PreTrainedModel as PreTrainedModel, __webpack_exports__PreTrainedTokenizer as PreTrainedTokenizer, __webpack_exports__PretrainedConfig as PretrainedConfig, __webpack_exports__PretrainedMixin as PretrainedMixin, __webpack_exports__Processor as Processor, __webpack_exports__PvtForImageClassification as PvtForImageClassification, __webpack_exports__PvtImageProcessor as PvtImageProcessor, __webpack_exports__PvtModel as PvtModel, __webpack_exports__PvtPreTrainedModel as PvtPreTrainedModel, __webpack_exports__PyAnnoteFeatureExtractor as PyAnnoteFeatureExtractor, __webpack_exports__PyAnnoteForAudioFrameClassification as PyAnnoteForAudioFrameClassification, __webpack_exports__PyAnnoteModel as PyAnnoteModel, __webpack_exports__PyAnnotePreTrainedModel as PyAnnotePreTrainedModel, __webpack_exports__PyAnnoteProcessor as PyAnnoteProcessor, __webpack_exports__QuestionAnsweringModelOutput as QuestionAnsweringModelOutput, __webpack_exports__QuestionAnsweringPipeline as QuestionAnsweringPipeline, __webpack_exports__Qwen2ForCausalLM as Qwen2ForCausalLM, __webpack_exports__Qwen2Model as Qwen2Model, __webpack_exports__Qwen2PreTrainedModel as Qwen2PreTrainedModel, __webpack_exports__Qwen2Tokenizer as Qwen2Tokenizer, __webpack_exports__Qwen2VLForConditionalGeneration as Qwen2VLForConditionalGeneration, __webpack_exports__Qwen2VLImageProcessor as Qwen2VLImageProcessor, __webpack_exports__Qwen2VLPreTrainedModel as Qwen2VLPreTrainedModel, __webpack_exports__Qwen2VLProcessor as Qwen2VLProcessor, __webpack_exports__Qwen3ForCausalLM as Qwen3ForCausalLM, __webpack_exports__Qwen3Model as Qwen3Model, __webpack_exports__Qwen3PreTrainedModel as Qwen3PreTrainedModel, __webpack_exports__RFDetrForObjectDetection as RFDetrForObjectDetection, __webpack_exports__RFDetrModel as RFDetrModel, __webpack_exports__RFDetrObjectDetectionOutput as RFDetrObjectDetectionOutput, __webpack_exports__RFDetrPreTrainedModel as RFDetrPreTrainedModel, __webpack_exports__RTDetrForObjectDetection as RTDetrForObjectDetection, __webpack_exports__RTDetrImageProcessor as RTDetrImageProcessor, __webpack_exports__RTDetrModel as RTDetrModel, __webpack_exports__RTDetrObjectDetectionOutput as RTDetrObjectDetectionOutput, __webpack_exports__RTDetrPreTrainedModel as RTDetrPreTrainedModel, __webpack_exports__RTDetrV2ForObjectDetection as RTDetrV2ForObjectDetection, __webpack_exports__RTDetrV2Model as RTDetrV2Model, __webpack_exports__RTDetrV2ObjectDetectionOutput as RTDetrV2ObjectDetectionOutput, __webpack_exports__RTDetrV2PreTrainedModel as RTDetrV2PreTrainedModel, __webpack_exports__RawAudio as RawAudio, __webpack_exports__RawImage as RawImage, __webpack_exports__RawVideo as RawVideo, __webpack_exports__RawVideoFrame as RawVideoFrame, __webpack_exports__RepetitionPenaltyLogitsProcessor as RepetitionPenaltyLogitsProcessor, __webpack_exports__ResNetForImageClassification as ResNetForImageClassification, __webpack_exports__ResNetModel as ResNetModel, __webpack_exports__ResNetPreTrainedModel as ResNetPreTrainedModel, __webpack_exports__RoFormerForMaskedLM as RoFormerForMaskedLM, __webpack_exports__RoFormerForQuestionAnswering as RoFormerForQuestionAnswering, __webpack_exports__RoFormerForSequenceClassification as RoFormerForSequenceClassification, __webpack_exports__RoFormerForTokenClassification as RoFormerForTokenClassification, __webpack_exports__RoFormerModel as RoFormerModel, __webpack_exports__RoFormerPreTrainedModel as RoFormerPreTrainedModel, __webpack_exports__RoFormerTokenizer as RoFormerTokenizer, __webpack_exports__RobertaForMaskedLM as RobertaForMaskedLM, __webpack_exports__RobertaForQuestionAnswering as RobertaForQuestionAnswering, __webpack_exports__RobertaForSequenceClassification as RobertaForSequenceClassification, __webpack_exports__RobertaForTokenClassification as RobertaForTokenClassification, __webpack_exports__RobertaModel as RobertaModel, __webpack_exports__RobertaPreTrainedModel as RobertaPreTrainedModel, __webpack_exports__RobertaTokenizer as RobertaTokenizer, __webpack_exports__Sam2ImageProcessor as Sam2ImageProcessor, __webpack_exports__Sam2ImageSegmentationOutput as Sam2ImageSegmentationOutput, __webpack_exports__Sam2Model as Sam2Model, __webpack_exports__Sam2PreTrainedModel as Sam2PreTrainedModel, __webpack_exports__Sam2Processor as Sam2Processor, __webpack_exports__Sam2VideoProcessor as Sam2VideoProcessor, __webpack_exports__Sam3ImageProcessor as Sam3ImageProcessor, __webpack_exports__Sam3TrackerModel as Sam3TrackerModel, __webpack_exports__SamImageProcessor as SamImageProcessor, __webpack_exports__SamImageSegmentationOutput as SamImageSegmentationOutput, __webpack_exports__SamModel as SamModel, __webpack_exports__SamPreTrainedModel as SamPreTrainedModel, __webpack_exports__SamProcessor as SamProcessor, __webpack_exports__SapiensForDepthEstimation as SapiensForDepthEstimation, __webpack_exports__SapiensForNormalEstimation as SapiensForNormalEstimation, __webpack_exports__SapiensForSemanticSegmentation as SapiensForSemanticSegmentation, __webpack_exports__SapiensPreTrainedModel as SapiensPreTrainedModel, __webpack_exports__SeamlessM4TFeatureExtractor as SeamlessM4TFeatureExtractor, __webpack_exports__SegformerFeatureExtractor as SegformerFeatureExtractor, __webpack_exports__SegformerForImageClassification as SegformerForImageClassification, __webpack_exports__SegformerForSemanticSegmentation as SegformerForSemanticSegmentation, __webpack_exports__SegformerImageProcessor as SegformerImageProcessor, __webpack_exports__SegformerModel as SegformerModel, __webpack_exports__SegformerPreTrainedModel as SegformerPreTrainedModel, __webpack_exports__Seq2SeqLMOutput as Seq2SeqLMOutput, __webpack_exports__SequenceClassifierOutput as SequenceClassifierOutput, __webpack_exports__SiglipImageProcessor as SiglipImageProcessor, __webpack_exports__SiglipModel as SiglipModel, __webpack_exports__SiglipPreTrainedModel as SiglipPreTrainedModel, __webpack_exports__SiglipTextModel as SiglipTextModel, __webpack_exports__SiglipTokenizer as SiglipTokenizer, __webpack_exports__SiglipVisionModel as SiglipVisionModel, __webpack_exports__SmolLM3ForCausalLM as SmolLM3ForCausalLM, __webpack_exports__SmolLM3Model as SmolLM3Model, __webpack_exports__SmolLM3PreTrainedModel as SmolLM3PreTrainedModel, __webpack_exports__SmolVLMForConditionalGeneration as SmolVLMForConditionalGeneration, __webpack_exports__SmolVLMImageProcessor as SmolVLMImageProcessor, __webpack_exports__SmolVLMProcessor as SmolVLMProcessor, __webpack_exports__SnacDecoderModel as SnacDecoderModel, __webpack_exports__SnacEncoderModel as SnacEncoderModel, __webpack_exports__SnacFeatureExtractor as SnacFeatureExtractor, __webpack_exports__SnacModel as SnacModel, __webpack_exports__SnacPreTrainedModel as SnacPreTrainedModel, __webpack_exports__SpeechT5FeatureExtractor as SpeechT5FeatureExtractor, __webpack_exports__SpeechT5ForSpeechToText as SpeechT5ForSpeechToText, __webpack_exports__SpeechT5ForTextToSpeech as SpeechT5ForTextToSpeech, __webpack_exports__SpeechT5HifiGan as SpeechT5HifiGan, __webpack_exports__SpeechT5Model as SpeechT5Model, __webpack_exports__SpeechT5PreTrainedModel as SpeechT5PreTrainedModel, __webpack_exports__SpeechT5Processor as SpeechT5Processor, __webpack_exports__SpeechT5Tokenizer as SpeechT5Tokenizer, __webpack_exports__SqueezeBertForMaskedLM as SqueezeBertForMaskedLM, __webpack_exports__SqueezeBertForQuestionAnswering as SqueezeBertForQuestionAnswering, __webpack_exports__SqueezeBertForSequenceClassification as SqueezeBertForSequenceClassification, __webpack_exports__SqueezeBertModel as SqueezeBertModel, __webpack_exports__SqueezeBertPreTrainedModel as SqueezeBertPreTrainedModel, __webpack_exports__SqueezeBertTokenizer as SqueezeBertTokenizer, __webpack_exports__StableLmForCausalLM as StableLmForCausalLM, __webpack_exports__StableLmModel as StableLmModel, __webpack_exports__StableLmPreTrainedModel as StableLmPreTrainedModel, __webpack_exports__Starcoder2ForCausalLM as Starcoder2ForCausalLM, __webpack_exports__Starcoder2Model as Starcoder2Model, __webpack_exports__Starcoder2PreTrainedModel as Starcoder2PreTrainedModel, __webpack_exports__StoppingCriteria as StoppingCriteria, __webpack_exports__StoppingCriteriaList as StoppingCriteriaList, __webpack_exports__StyleTextToSpeech2Model as StyleTextToSpeech2Model, __webpack_exports__StyleTextToSpeech2PreTrainedModel as StyleTextToSpeech2PreTrainedModel, __webpack_exports__SummarizationPipeline as SummarizationPipeline, __webpack_exports__SupertonicForConditionalGeneration as SupertonicForConditionalGeneration, __webpack_exports__SupertonicPreTrainedModel as SupertonicPreTrainedModel, __webpack_exports__SuppressTokensAtBeginLogitsProcessor as SuppressTokensAtBeginLogitsProcessor, __webpack_exports__Swin2SRForImageSuperResolution as Swin2SRForImageSuperResolution, __webpack_exports__Swin2SRImageProcessor as Swin2SRImageProcessor, __webpack_exports__Swin2SRModel as Swin2SRModel, __webpack_exports__Swin2SRPreTrainedModel as Swin2SRPreTrainedModel, __webpack_exports__SwinForImageClassification as SwinForImageClassification, __webpack_exports__SwinForSemanticSegmentation as SwinForSemanticSegmentation, __webpack_exports__SwinModel as SwinModel, __webpack_exports__SwinPreTrainedModel as SwinPreTrainedModel, __webpack_exports__T5ForConditionalGeneration as T5ForConditionalGeneration, __webpack_exports__T5Model as T5Model, __webpack_exports__T5PreTrainedModel as T5PreTrainedModel, __webpack_exports__T5Tokenizer as T5Tokenizer, __webpack_exports__TableTransformerForObjectDetection as TableTransformerForObjectDetection, __webpack_exports__TableTransformerModel as TableTransformerModel, __webpack_exports__TableTransformerObjectDetectionOutput as TableTransformerObjectDetectionOutput, __webpack_exports__TableTransformerPreTrainedModel as TableTransformerPreTrainedModel, __webpack_exports__TemperatureLogitsWarper as TemperatureLogitsWarper, __webpack_exports__Tensor as Tensor, __webpack_exports__Text2TextGenerationPipeline as Text2TextGenerationPipeline, __webpack_exports__TextClassificationPipeline as TextClassificationPipeline, __webpack_exports__TextGenerationPipeline as TextGenerationPipeline, __webpack_exports__TextStreamer as TextStreamer, __webpack_exports__TextToAudioPipeline as TextToAudioPipeline, __webpack_exports__TokenClassificationPipeline as TokenClassificationPipeline, __webpack_exports__TokenClassifierOutput as TokenClassifierOutput, __webpack_exports__TokenizerModel as TokenizerModel, __webpack_exports__TopKLogitsWarper as TopKLogitsWarper, __webpack_exports__TopPLogitsWarper as TopPLogitsWarper, __webpack_exports__TrOCRForCausalLM as TrOCRForCausalLM, __webpack_exports__TrOCRPreTrainedModel as TrOCRPreTrainedModel, __webpack_exports__TranslationPipeline as TranslationPipeline, __webpack_exports__UltravoxModel as UltravoxModel, __webpack_exports__UltravoxPreTrainedModel as UltravoxPreTrainedModel, __webpack_exports__UltravoxProcessor as UltravoxProcessor, __webpack_exports__UniSpeechForCTC as UniSpeechForCTC, __webpack_exports__UniSpeechForSequenceClassification as UniSpeechForSequenceClassification, __webpack_exports__UniSpeechModel as UniSpeechModel, __webpack_exports__UniSpeechPreTrainedModel as UniSpeechPreTrainedModel, __webpack_exports__UniSpeechSatForAudioFrameClassification as UniSpeechSatForAudioFrameClassification, __webpack_exports__UniSpeechSatForCTC as UniSpeechSatForCTC, __webpack_exports__UniSpeechSatForSequenceClassification as UniSpeechSatForSequenceClassification, __webpack_exports__UniSpeechSatModel as UniSpeechSatModel, __webpack_exports__UniSpeechSatPreTrainedModel as UniSpeechSatPreTrainedModel, __webpack_exports__VLChatProcessor as VLChatProcessor, __webpack_exports__VLMImageProcessor as VLMImageProcessor, __webpack_exports__VaultGemmaForCausalLM as VaultGemmaForCausalLM, __webpack_exports__VaultGemmaModel as VaultGemmaModel, __webpack_exports__VaultGemmaPreTrainedModel as VaultGemmaPreTrainedModel, __webpack_exports__ViTFeatureExtractor as ViTFeatureExtractor, __webpack_exports__ViTForImageClassification as ViTForImageClassification, __webpack_exports__ViTImageProcessor as ViTImageProcessor, __webpack_exports__ViTMAEModel as ViTMAEModel, __webpack_exports__ViTMAEPreTrainedModel as ViTMAEPreTrainedModel, __webpack_exports__ViTMSNForImageClassification as ViTMSNForImageClassification, __webpack_exports__ViTMSNModel as ViTMSNModel, __webpack_exports__ViTMSNPreTrainedModel as ViTMSNPreTrainedModel, __webpack_exports__ViTModel as ViTModel, __webpack_exports__ViTPreTrainedModel as ViTPreTrainedModel, __webpack_exports__VisionEncoderDecoderModel as VisionEncoderDecoderModel, __webpack_exports__VitMatteForImageMatting as VitMatteForImageMatting, __webpack_exports__VitMatteImageProcessor as VitMatteImageProcessor, __webpack_exports__VitMattePreTrainedModel as VitMattePreTrainedModel, __webpack_exports__VitPoseForPoseEstimation as VitPoseForPoseEstimation, __webpack_exports__VitPoseImageProcessor as VitPoseImageProcessor, __webpack_exports__VitPosePreTrainedModel as VitPosePreTrainedModel, __webpack_exports__VitsModel as VitsModel, __webpack_exports__VitsModelOutput as VitsModelOutput, __webpack_exports__VitsPreTrainedModel as VitsPreTrainedModel, __webpack_exports__VitsTokenizer as VitsTokenizer, __webpack_exports__VoxtralForConditionalGeneration as VoxtralForConditionalGeneration, __webpack_exports__VoxtralProcessor as VoxtralProcessor, __webpack_exports__Wav2Vec2BertForCTC as Wav2Vec2BertForCTC, __webpack_exports__Wav2Vec2BertForSequenceClassification as Wav2Vec2BertForSequenceClassification, __webpack_exports__Wav2Vec2BertModel as Wav2Vec2BertModel, __webpack_exports__Wav2Vec2BertPreTrainedModel as Wav2Vec2BertPreTrainedModel, __webpack_exports__Wav2Vec2CTCTokenizer as Wav2Vec2CTCTokenizer, __webpack_exports__Wav2Vec2FeatureExtractor as Wav2Vec2FeatureExtractor, __webpack_exports__Wav2Vec2ForAudioFrameClassification as Wav2Vec2ForAudioFrameClassification, __webpack_exports__Wav2Vec2ForCTC as Wav2Vec2ForCTC, __webpack_exports__Wav2Vec2ForSequenceClassification as Wav2Vec2ForSequenceClassification, __webpack_exports__Wav2Vec2Model as Wav2Vec2Model, __webpack_exports__Wav2Vec2PreTrainedModel as Wav2Vec2PreTrainedModel, __webpack_exports__Wav2Vec2Processor as Wav2Vec2Processor, __webpack_exports__Wav2Vec2ProcessorWithLM as Wav2Vec2ProcessorWithLM, __webpack_exports__WavLMForAudioFrameClassification as WavLMForAudioFrameClassification, __webpack_exports__WavLMForCTC as WavLMForCTC, __webpack_exports__WavLMForSequenceClassification as WavLMForSequenceClassification, __webpack_exports__WavLMForXVector as WavLMForXVector, __webpack_exports__WavLMModel as WavLMModel, __webpack_exports__WavLMPreTrainedModel as WavLMPreTrainedModel, __webpack_exports__WeSpeakerFeatureExtractor as WeSpeakerFeatureExtractor, __webpack_exports__WeSpeakerResNetModel as WeSpeakerResNetModel, __webpack_exports__WeSpeakerResNetPreTrainedModel as WeSpeakerResNetPreTrainedModel, __webpack_exports__WhisperFeatureExtractor as WhisperFeatureExtractor, __webpack_exports__WhisperForConditionalGeneration as WhisperForConditionalGeneration, __webpack_exports__WhisperModel as WhisperModel, __webpack_exports__WhisperPreTrainedModel as WhisperPreTrainedModel, __webpack_exports__WhisperProcessor as WhisperProcessor, __webpack_exports__WhisperTextStreamer as WhisperTextStreamer, __webpack_exports__WhisperTimeStampLogitsProcessor as WhisperTimeStampLogitsProcessor, __webpack_exports__WhisperTokenizer as WhisperTokenizer, __webpack_exports__XLMForQuestionAnswering as XLMForQuestionAnswering, __webpack_exports__XLMForSequenceClassification as XLMForSequenceClassification, __webpack_exports__XLMForTokenClassification as XLMForTokenClassification, __webpack_exports__XLMModel as XLMModel, __webpack_exports__XLMPreTrainedModel as XLMPreTrainedModel, __webpack_exports__XLMRobertaForMaskedLM as XLMRobertaForMaskedLM, __webpack_exports__XLMRobertaForQuestionAnswering as XLMRobertaForQuestionAnswering, __webpack_exports__XLMRobertaForSequenceClassification as XLMRobertaForSequenceClassification, __webpack_exports__XLMRobertaForTokenClassification as XLMRobertaForTokenClassification, __webpack_exports__XLMRobertaModel as XLMRobertaModel, __webpack_exports__XLMRobertaPreTrainedModel as XLMRobertaPreTrainedModel, __webpack_exports__XLMRobertaTokenizer as XLMRobertaTokenizer, __webpack_exports__XLMTokenizer as XLMTokenizer, __webpack_exports__XLMWithLMHeadModel as XLMWithLMHeadModel, __webpack_exports__XVectorOutput as XVectorOutput, __webpack_exports__YolosFeatureExtractor as YolosFeatureExtractor, __webpack_exports__YolosForObjectDetection as YolosForObjectDetection, __webpack_exports__YolosImageProcessor as YolosImageProcessor, __webpack_exports__YolosModel as YolosModel, __webpack_exports__YolosObjectDetectionOutput as YolosObjectDetectionOutput, __webpack_exports__YolosPreTrainedModel as YolosPreTrainedModel, __webpack_exports__ZeroShotAudioClassificationPipeline as ZeroShotAudioClassificationPipeline, __webpack_exports__ZeroShotClassificationPipeline as ZeroShotClassificationPipeline, __webpack_exports__ZeroShotImageClassificationPipeline as ZeroShotImageClassificationPipeline, __webpack_exports__ZeroShotObjectDetectionPipeline as ZeroShotObjectDetectionPipeline, __webpack_exports__bankers_round as bankers_round, __webpack_exports__cat as cat, __webpack_exports__cos_sim as cos_sim, __webpack_exports__dot as dot, __webpack_exports__dynamic_time_warping as dynamic_time_warping, __webpack_exports__env as env, __webpack_exports__full as full, __webpack_exports__full_like as full_like, __webpack_exports__getCacheShapes as getCacheShapes, __webpack_exports__hamming as hamming, __webpack_exports__hanning as hanning, __webpack_exports__interpolate as interpolate, __webpack_exports__interpolate_4d as interpolate_4d, __webpack_exports__interpolate_data as interpolate_data, __webpack_exports__is_chinese_char as is_chinese_char, __webpack_exports__layer_norm as layer_norm, __webpack_exports__load_image as load_image, __webpack_exports__load_video as load_video, __webpack_exports__log_softmax as log_softmax, __webpack_exports__magnitude as magnitude, __webpack_exports__matmul as matmul, __webpack_exports__max as max, __webpack_exports__mean as mean, __webpack_exports__mean_pooling as mean_pooling, __webpack_exports__medianFilter as medianFilter, __webpack_exports__mel_filter_bank as mel_filter_bank, __webpack_exports__min as min, __webpack_exports__ones as ones, __webpack_exports__ones_like as ones_like, __webpack_exports__permute as permute, __webpack_exports__permute_data as permute_data, __webpack_exports__pipeline as pipeline, __webpack_exports__quantize_embeddings as quantize_embeddings, __webpack_exports__rand as rand, __webpack_exports__randn as randn, __webpack_exports__read_audio as read_audio, __webpack_exports__rfft as rfft, __webpack_exports__round as round, __webpack_exports__slice as slice, __webpack_exports__softmax as softmax, __webpack_exports__spectrogram as spectrogram, __webpack_exports__stack as stack, __webpack_exports__std_mean as std_mean, __webpack_exports__topk as topk, __webpack_exports__window_function as window_function, __webpack_exports__zeros as zeros, __webpack_exports__zeros_like as zeros_like };
 
 //# sourceMappingURL=transformers.node.mjs.map

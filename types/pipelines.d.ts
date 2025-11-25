@@ -38,7 +38,7 @@
  * @returns {Promise<AllTasks[T]>} A Pipeline object for the specified task.
  * @throws {Error} If an unsupported pipeline is requested.
  */
-export function pipeline<T extends PipelineType>(task: T, model?: string, { progress_callback, config, cache_dir, local_files_only, revision, device, dtype, subfolder, use_external_data_format, model_file_name, session_options, handleModelText, }?: import("./utils/hub.js").PretrainedModelOptions): Promise<AllTasks[T]>;
+export function pipeline<T extends PipelineType>(task: T, model?: string, { progress_callback, config, cache_dir, local_files_only, revision, device, dtype, subfolder, use_external_data_format, model_file_name, session_options, }?: import("./utils/hub.js").PretrainedModelOptions): Promise<AllTasks[T]>;
 declare const Pipeline_base: new () => {
     (...args: any[]): any;
     _call(...args: any[]): any;
@@ -1272,6 +1272,9 @@ declare const TextToAudioPipeline_base: new (options: TextToAudioPipelineConstru
  *
  * @typedef {Object} TextToAudioPipelineOptions Parameters specific to text-to-audio pipelines.
  * @property {Tensor|Float32Array|string|URL} [speaker_embeddings=null] The speaker embeddings (if the model requires it).
+ * @property {number} [num_inference_steps] The number of denoising steps (if the model supports it).
+ * More denoising steps usually lead to higher quality audio but slower inference.
+ * @property {number} [speed] The speed of the generated audio (if the model supports it).
  *
  * @callback TextToAudioPipelineCallback Generates speech/audio from the inputs.
  * @param {string|string[]} texts The text(s) to generate.
@@ -1284,31 +1287,24 @@ declare const TextToAudioPipeline_base: new (options: TextToAudioPipelineConstru
  * Text-to-audio generation pipeline using any `AutoModelForTextToWaveform` or `AutoModelForTextToSpectrogram`.
  * This pipeline generates an audio file from an input text and optional other conditional inputs.
  *
- * **Example:** Generate audio from text with `Xenova/speecht5_tts`.
+ * **Example:** Generate audio from text with `onnx-community/Supertonic-TTS-ONNX`.
  * ```javascript
- * const synthesizer = await pipeline('text-to-speech', 'Xenova/speecht5_tts', { quantized: false });
- * const speaker_embeddings = 'https://huggingface.co/datasets/Xenova/transformers.js-docs/resolve/main/speaker_embeddings.bin';
- * const out = await synthesizer('Hello, my dog is cute', { speaker_embeddings });
+ * const synthesizer = await pipeline('text-to-speech', 'onnx-community/Supertonic-TTS-ONNX');
+ * const speaker_embeddings = 'https://huggingface.co/onnx-community/Supertonic-TTS-ONNX/resolve/main/voices/F1.bin';
+ * const output = await synthesizer('Hello there, how are you doing?', { speaker_embeddings });
  * // RawAudio {
- * //   audio: Float32Array(26112) [-0.00005657337896991521, 0.00020583874720614403, ...],
- * //   sampling_rate: 16000
+ * //   audio: Float32Array(95232) [-0.000482565927086398, -0.0004853440332226455, ...],
+ * //   sampling_rate: 44100
  * // }
- * ```
  *
- * You can then save the audio to a .wav file with the `wavefile` package:
- * ```javascript
- * import wavefile from 'wavefile';
- * import fs from 'fs';
- *
- * const wav = new wavefile.WaveFile();
- * wav.fromScratch(1, out.sampling_rate, '32f', out.audio);
- * fs.writeFileSync('out.wav', wav.toBuffer());
+ * // Optional: Save the audio to a .wav file or Blob
+ * await output.save('output.wav'); // You can also use `output.toBlob()` to access the audio as a Blob
  * ```
  *
  * **Example:** Multilingual speech generation with `Xenova/mms-tts-fra`. See [here](https://huggingface.co/models?pipeline_tag=text-to-speech&other=vits&sort=trending) for the full list of available languages (1107).
  * ```javascript
  * const synthesizer = await pipeline('text-to-speech', 'Xenova/mms-tts-fra');
- * const out = await synthesizer('Bonjour');
+ * const output = await synthesizer('Bonjour');
  * // RawAudio {
  * //   audio: Float32Array(23808) [-0.00037693005288019776, 0.0003325853613205254, ...],
  * //   sampling_rate: 16000
@@ -1318,7 +1314,13 @@ declare const TextToAudioPipeline_base: new (options: TextToAudioPipelineConstru
 export class TextToAudioPipeline extends TextToAudioPipeline_base {
     DEFAULT_VOCODER_ID: string;
     vocoder: PreTrainedModel;
+    _prepare_speaker_embeddings(speaker_embeddings: any): Promise<any>;
     _call(texts: string | string[], options: TextToAudioPipelineOptions): Promise<TextToAudioOutput>;
+    _call_supertonic(text_inputs: any, { speaker_embeddings, num_inference_steps, speed }: {
+        speaker_embeddings: any;
+        num_inference_steps: any;
+        speed: any;
+    }): Promise<RawAudio>;
     _call_text_to_waveform(text_inputs: any): Promise<RawAudio>;
     _call_text_to_spectrogram(text_inputs: any, { speaker_embeddings }: {
         speaker_embeddings: any;
@@ -2124,6 +2126,15 @@ export type TextToAudioPipelineOptions = {
      * The speaker embeddings (if the model requires it).
      */
     speaker_embeddings?: Tensor | Float32Array | string | URL;
+    /**
+     * The number of denoising steps (if the model supports it).
+     * More denoising steps usually lead to higher quality audio but slower inference.
+     */
+    num_inference_steps?: number;
+    /**
+     * The speed of the generated audio (if the model supports it).
+     */
+    speed?: number;
 };
 /**
  * Generates speech/audio from the inputs.
@@ -2150,12 +2161,12 @@ export type DepthEstimationPipelineOutput = {
  */
 export type DepthEstimationPipelineCallback = (images: ImagePipelineInputs) => Promise<DepthEstimationPipelineOutput | DepthEstimationPipelineOutput[]>;
 export type DepthEstimationPipelineType = ImagePipelineConstructorArgs & DepthEstimationPipelineCallback & Disposable;
-import { PreTrainedModel } from "./models.js";
-import { PreTrainedTokenizer } from "./tokenizers.js";
-import { Processor } from "./base/processing_utils.js";
-import { Tensor } from "./utils/tensor.js";
-import { RawImage } from "./utils/image.js";
-import { RawAudio } from "./utils/audio.js";
+import { PreTrainedModel } from './models.js';
+import { PreTrainedTokenizer } from './tokenizers.js';
+import { Processor } from './base/processing_utils.js';
+import { Tensor } from './utils/tensor.js';
+import { RawImage } from './utils/image.js';
+import { RawAudio } from './utils/audio.js';
 declare const SUPPORTED_TASKS: Readonly<{
     "text-classification": {
         tokenizer: typeof AutoTokenizer;
@@ -2397,26 +2408,26 @@ declare const TASK_ALIASES: Readonly<{
     "text-to-speech": "text-to-audio";
     embeddings: "feature-extraction";
 }>;
-import { AutoTokenizer } from "./tokenizers.js";
-import { AutoModelForSequenceClassification } from "./models.js";
-import { AutoModelForTokenClassification } from "./models.js";
-import { AutoModelForQuestionAnswering } from "./models.js";
-import { AutoModelForMaskedLM } from "./models.js";
-import { AutoModelForSeq2SeqLM } from "./models.js";
-import { AutoModelForCausalLM } from "./models.js";
-import { AutoModelForAudioClassification } from "./models.js";
-import { AutoProcessor } from "./models/auto/processing_auto.js";
-import { AutoModel } from "./models.js";
-import { AutoModelForSpeechSeq2Seq } from "./models.js";
-import { AutoModelForTextToWaveform } from "./models.js";
-import { AutoModelForTextToSpectrogram } from "./models.js";
-import { AutoModelForVision2Seq } from "./models.js";
-import { AutoModelForImageClassification } from "./models.js";
-import { AutoModelForImageSegmentation } from "./models.js";
-import { AutoModelForObjectDetection } from "./models.js";
-import { AutoModelForZeroShotObjectDetection } from "./models.js";
-import { AutoModelForDocumentQuestionAnswering } from "./models.js";
-import { AutoModelForImageToImage } from "./models.js";
-import { AutoModelForDepthEstimation } from "./models.js";
+import { AutoTokenizer } from './tokenizers.js';
+import { AutoModelForSequenceClassification } from './models.js';
+import { AutoModelForTokenClassification } from './models.js';
+import { AutoModelForQuestionAnswering } from './models.js';
+import { AutoModelForMaskedLM } from './models.js';
+import { AutoModelForSeq2SeqLM } from './models.js';
+import { AutoModelForCausalLM } from './models.js';
+import { AutoModelForAudioClassification } from './models.js';
+import { AutoProcessor } from './models/auto/processing_auto.js';
+import { AutoModel } from './models.js';
+import { AutoModelForSpeechSeq2Seq } from './models.js';
+import { AutoModelForTextToWaveform } from './models.js';
+import { AutoModelForTextToSpectrogram } from './models.js';
+import { AutoModelForVision2Seq } from './models.js';
+import { AutoModelForImageClassification } from './models.js';
+import { AutoModelForImageSegmentation } from './models.js';
+import { AutoModelForObjectDetection } from './models.js';
+import { AutoModelForZeroShotObjectDetection } from './models.js';
+import { AutoModelForDocumentQuestionAnswering } from './models.js';
+import { AutoModelForImageToImage } from './models.js';
+import { AutoModelForDepthEstimation } from './models.js';
 export {};
 //# sourceMappingURL=pipelines.d.ts.map

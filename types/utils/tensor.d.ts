@@ -149,6 +149,12 @@ export function zeros_like(tensor: Tensor): Tensor;
  */
 export function rand(size: number[]): Tensor;
 /**
+ * Returns a tensor filled with random numbers from a normal distribution with mean 0 and variance 1 (also called the standard normal distribution).
+ * @param {number[]} size A sequence of integers defining the shape of the output tensor.
+ * @returns {Tensor} The random tensor.
+ */
+export function randn(size: number[]): Tensor;
+/**
  * Quantizes the embeddings tensor to binary or unsigned binary precision.
  * @param {Tensor} tensor The tensor to quantize.
  * @param {'binary'|'ubinary'} precision The precision to use for quantization.
