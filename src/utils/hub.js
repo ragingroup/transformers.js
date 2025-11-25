@@ -418,13 +418,15 @@ export async function getModelFile(
   return_path = false,
 ) {
   if (typeof env.getModelFile === "function") {
-    return await env.getModelFile(
+     const res= await env.getModelFile(
       path_or_repo_id,
       filename,
       fatal,
       options,
       return_path,
-    );
+    ) ;
+    // @ts-ignore
+    if(res)return res
   }
   if (!env.allowLocalModels) {
     // User has disabled local models, so we just make sure other settings are correct.
@@ -684,6 +686,7 @@ export async function getModelFile(
       await cache
         .put(
           cacheKey,
+          // @ts-ignore
           new Response(result, {
             headers: response.headers,
           }),
